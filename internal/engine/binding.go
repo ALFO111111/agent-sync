@@ -35,6 +35,10 @@ func (e *Engine) discover() {
 		if cwd == "" {
 			continue
 		}
+		if stopPID, stopped := e.st.StoppedDirs[strings.ToLower(name)]; stopped {
+			e.log.Printf("跳过 %s：用户已停止同步（原项目 %s，可在“已停止同步”里恢复）", cwd, stopPID)
+			continue
+		}
 		pid, display := e.identify(cwd, name)
 		if e.cfg.Ignored(pid) || e.st.Ignored[pid] {
 			continue
@@ -150,6 +154,17 @@ func (e *Engine) scanRepos() map[string][]string {
 // bind 把项目身份证绑定到本机目录。takeover=true 时，若该目录已属于别的项目，则改归新项目（认领时用）。
 func (e *Engine) bind(pid, root, display string, takeover bool) *state.Binding {
 	dir := e.localDirFor(root)
+	// 用户点过"停止同步"的目录：扫描/自动对上都不再绑它，除非是用户主动认领（takeover）。
+	// 不能只看 Ignored[pid]：重新扫描可能算出不同的 pid（认领来的本地项目用的是别的设备的 ID、
+	// 或者 git 的 remote 换了），那样项目会原地复活。
+	dirKey := strings.ToLower(dir)
+	if stopPID, stopped := e.st.StoppedDirs[dirKey]; stopped && !takeover {
+		e.log.Printf("跳过 %s：本机目录 %s 已停止同步（原项目 %s，可在“已停止同步”里恢复）", pid, root, stopPID)
+		return nil
+	}
+	if takeover {
+		delete(e.st.StoppedDirs, dirKey)
+	}
 	for opid, b := range e.st.Bindings {
 		if opid != pid && strings.EqualFold(b.Dir, dir) {
 			if !takeover {
@@ -200,7 +215,11 @@ func (e *Engine) movedAway(dirName string) bool {
 // 不会因为旧状态把云端文件误判成"本地删了"。
 func (e *Engine) ignore(pid string) {
 	e.st.Ignored[pid] = true
-	if e.st.Bindings[pid] != nil {
+	if b := e.st.Bindings[pid]; b != nil {
+		// 连同目录一起记住：下一轮扫描即使算出新的 pid，也不会马上又绑回来
+		if b.Dir != "" {
+			e.st.StoppedDirs[strings.ToLower(b.Dir)] = pid
+		}
 		delete(e.st.Bindings, pid)
 		e.dropFileStates(pid)
 		e.log.Printf("已停止同步项目 %s（本机和云端的文件都没动）", pid)

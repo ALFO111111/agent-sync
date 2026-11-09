@@ -7,6 +7,15 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-09
+
+### 修复 / Fixed
+
+- “停止同步”按钮点了像没反应：确认后现在立刻显示“正在停止同步 …”和转圈，只禁用正在操作的那一行（其他行照常能点），失败会显示原因并恢复按钮，不再整页按钮变灰十几秒
+  The “Stop syncing” button no longer looks dead: after confirming, it immediately shows “Stopping syncing …” with a spinner and disables only the row being acted on (other rows stay usable); failures show the reason and re-enable the button instead of greying out the whole page for a dozen seconds
+- 停止同步后项目又自动绑回来：忽略现在按目录记住，下一轮扫描即使算出不同的项目 ID（认领来的本地文件夹用的是别的设备的 ID、或者 git 的 remote 换了），也不会再自动绑回；在“已停止同步”里恢复后，会按当前目录和身份重新绑定
+  A stopped project no longer comes right back: ignores now remember the folder, so re-discovery won't bind it again even when the project ID changes (a claimed local folder carries the other device's ID, or the git remote changed); restoring it under “Ignored / stopped” binds it again under its current folder and identity
+
 ## [0.5.1] - 2026-11-01
 
 ### 修复 / Fixed

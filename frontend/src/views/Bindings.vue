@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="card">
-      <h3>{{ t('bindings.bound') }}</h3>
+      <h3>{{ t('bindings.bound') }}<Refreshing :on="!!busyKey" /></h3>
       <Skeleton v-if="!res.data" :lines="3" />
       <div v-else-if="!bound.length" class="muted">{{ t('bindings.noneBound') }}</div>
       <table v-else>
@@ -17,7 +17,7 @@
             <td>{{ b.display }}</td>
             <td>{{ b.root }}</td>
             <td class="muted pid" :title="b.pid">{{ b.pid }}</td>
-            <td class="ops"><button class="sm ghost danger" :disabled="busy" @click="unbind(b)">{{ t('bindings.stopSync') }}</button></td>
+            <td class="ops"><button class="sm ghost danger" :disabled="isBusy(b.pid)" @click="unbind(b)">{{ isBusy(b.pid) ? t('common.working') : t('bindings.stopSync') }}</button></td>
           </tr>
         </tbody>
       </table>
@@ -42,8 +42,8 @@
             <td>{{ c.device }}</td>
             <td class="muted">{{ c.root }}</td>
             <td class="ops">
-              <button class="sm primary" :disabled="busy" @click="claim(c)">{{ t('bindings.claim') }}</button>
-              <button class="sm ghost danger" :disabled="busy" @click="ignore(c)">{{ t('bindings.ignore') }}</button>
+              <button class="sm primary" :disabled="isBusy(claimKey(c))" @click="claim(c)">{{ isBusy(claimKey(c)) ? t('common.working') : t('bindings.claim') }}</button>
+              <button class="sm ghost danger" :disabled="isBusy(claimKey(c))" @click="ignore(c)">{{ t('bindings.ignore') }}</button>
             </td>
           </tr>
         </tbody>
@@ -65,7 +65,7 @@
             <td><span class="badge">{{ kindLabel(g.kind) }}</span></td>
             <td>{{ g.display || '—' }}</td>
             <td class="muted pid" :title="g.pid">{{ g.pid }}</td>
-            <td class="ops"><button class="sm" :disabled="busy" @click="unignore(g)">{{ t('bindings.restore') }}</button></td>
+            <td class="ops"><button class="sm" :disabled="isBusy(g.pid)" @click="unignore(g)">{{ isBusy(g.pid) ? t('common.working') : t('bindings.restore') }}</button></td>
           </tr>
         </tbody>
       </table>
@@ -94,21 +94,26 @@ const bound = computed(() => res.data?.bound || [])
 const claimable = computed(() => res.data?.claimable || [])
 const ignored = computed(() => res.data?.ignored || [])
 const remoteError = computed(() => res.data?.remoteError || res.error)
-const busy = ref(false) // 操作要顺带跑一轮同步，期间按钮禁用，免得连点
-const { notice, ok, fail } = useNotice()
+// 正在操作的那一行（'' = 空闲）。只禁用这一行，其他行照常可以点；
+// 操作要顺带跑一轮同步（几秒到几十秒），所以先显示"正在…"，别让用户以为点了没反应。
+const busyKey = ref('')
+const isBusy = (key) => busyKey.value === key
+const claimKey = (c) => c.pid + c.deviceId // 同一个 pid 可能来自多台设备，行要分开
+const { notice, pending, ok, fail } = useNotice()
 
 const refresh = () => res.refresh()
 
 // act 执行一个会顺带同步的操作。failKey 是失败提示的文字 key（带 {err} 参数）。
-async function act(fn, okText, failKey) {
-  busy.value = true
+async function act(key, pendingText, fn, okText, failKey) {
+  busyKey.value = key
+  pending(pendingText)
   try {
     await fn()
     ok(okText)
   } catch (e) {
     fail(t(failKey, { err: String(e) }))
   } finally {
-    busy.value = false
+    busyKey.value = ''
   }
   refresh()
 }
@@ -118,21 +123,25 @@ const nameOf = (p) => p.display || p.pid
 async function claim(c) {
   const dir = await api.PickDirectory()
   if (!dir) return
-  act(() => api.ClaimProject(c.pid, dir), t('bindings.claimed', { name: nameOf(c), dir }), 'bindings.claimFailed')
+  const name = nameOf(c)
+  act(claimKey(c), t('bindings.workingClaim', { name }), () => api.ClaimProject(c.pid, dir), t('bindings.claimed', { name, dir }), 'bindings.claimFailed')
 }
 
 function ignore(c) {
-  act(() => api.IgnoreProject(c.pid), t('bindings.ignoredOk', { name: nameOf(c) }), 'bindings.opFailed')
+  const name = nameOf(c)
+  act(claimKey(c), t('bindings.workingIgnore', { name }), () => api.IgnoreProject(c.pid), t('bindings.ignoredOk', { name }), 'bindings.opFailed')
 }
 
 async function unbind(b) {
-  const yes = await api.Confirm(t('bindings.stopTitle'), t('bindings.stopConfirm', { name: nameOf(b) }))
+  const name = nameOf(b)
+  const yes = await api.Confirm(t('bindings.stopTitle'), t('bindings.stopConfirm', { name }))
   if (!yes) return
-  act(() => api.IgnoreProject(b.pid), t('bindings.stopped', { name: nameOf(b) }), 'bindings.opFailed')
+  act(b.pid, t('bindings.workingStop', { name }), () => api.IgnoreProject(b.pid), t('bindings.stopped', { name }), 'bindings.opFailed')
 }
 
 function unignore(g) {
-  act(() => api.UnignoreProject(g.pid), t('bindings.restored', { name: nameOf(g) }), 'bindings.opFailed')
+  const name = nameOf(g)
+  act(g.pid, t('bindings.workingRestore', { name }), () => api.UnignoreProject(g.pid), t('bindings.restored', { name }), 'bindings.opFailed')
 }
 
 // 每次进这页：30 秒内拉过就不重复拉（同步结束时缓存会自动刷新）

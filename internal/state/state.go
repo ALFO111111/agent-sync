@@ -75,6 +75,10 @@ type State struct {
 	// Moved 项目搬到新文件夹后留下的旧会话目录（~/.claude/projects 下的目录名，小写）→ 原来的项目路径。
 	// 原路径不存在期间不再自动发现它：否则旧目录会被当成新项目，把同一批会话再传一遍。
 	Moved map[string]string `json:"moved,omitempty"`
+	// StoppedDirs 用户点了"停止同步"的项目目录（~/.claude/projects 下的目录名，小写）→ 当时的 pid。
+	// 只要目录还在这个表里，扫描就不再自动绑它：项目 ID 可能变（认领来的本地项目用的是别的设备的 ID、
+	// 或者 git 的 remote 换了），只按 pid 记忽略的话下一轮会算出新 ID 又绑回来，看起来像没停掉。
+	StoppedDirs map[string]string `json:"stoppedDirs,omitempty"`
 }
 
 // 本轮明细里的变化种类。
@@ -142,6 +146,9 @@ func Load() (*State, error) {
 	}
 	if st.CodexForks == nil {
 		st.CodexForks = map[string]string{}
+	}
+	if st.StoppedDirs == nil {
+		st.StoppedDirs = map[string]string{}
 	}
 	return st, nil
 }

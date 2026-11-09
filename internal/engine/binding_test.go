@@ -53,6 +53,66 @@ func TestIgnoreBoundProject(t *testing.T) {
 	}
 }
 
+// 停止同步要按"目录"记住：下一轮扫描如果算出了不同的项目 ID（比如认领来的本地文件夹用的是
+// 别的设备的 ID、或者 git 的远程地址换了），不能马上又自动绑回来，否则用户点了"停止同步"
+// 项目却原地复活。恢复（取消忽略）后要能正常绑回来。
+func TestIgnoreStaysStoppedWhenIdentityChanges(t *testing.T) {
+	t.Run("claimed-local-pid", func(t *testing.T) {
+		a := newDevice(t, "devA", nil)
+		root, dir := testutil.AddProject(t, a.cfg, "proj")
+		testutil.WriteProjectFile(t, a.cfg, dir, "s1.jsonl", sessionLine(root, "u1"))
+
+		// 认领来的项目：pid 里是别的设备的 ID，和本机重新扫描算出来的不一样
+		foreign := "local:devB:" + dir
+		a.sync(t, Options{Claim: &Claim{PID: foreign, Root: root}})
+
+		e := a.sync(t, Options{Ignore: foreign})
+		if e.st.Bindings[foreign] != nil || !e.st.Ignored[foreign] {
+			t.Fatalf("应解绑并记入忽略: %+v %+v", e.st.Bindings, e.st.Ignored)
+		}
+		if e = a.sync(t, Options{}); len(e.st.Bindings) != 0 {
+			t.Fatalf("停止同步后，下一轮不应换个 pid 又自动绑回来: %+v", e.st.Bindings)
+		}
+
+		if e = a.sync(t, Options{Unignore: foreign}); len(e.st.Bindings) != 1 {
+			t.Fatalf("取消忽略后应自动绑回来: %+v", e.st.Bindings)
+		}
+	})
+
+	t.Run("remote-changed", func(t *testing.T) {
+		a := newDevice(t, "devA", nil)
+		root, dir := testutil.AddProject(t, a.cfg, "proj")
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		gitRepo(t, root, "git@github.com:me/old.git")
+		testutil.WriteProjectFile(t, a.cfg, dir, "s1.jsonl", sessionLine(root, "u1"))
+		pid := a.sync(t, Options{}).theOnlyPID(t)
+
+		// 换了 remote：重新扫描会算出一个新的项目 ID
+		if out, err := exec.Command("git", "-C", root, "remote", "set-url", "origin", "git@github.com:me/new.git").CombinedOutput(); err != nil {
+			t.Fatalf("git: %v %s", err, out)
+		}
+		e := a.sync(t, Options{Ignore: pid})
+		if e.st.Bindings[pid] != nil || !e.st.Ignored[pid] {
+			t.Fatalf("应解绑并记入忽略: %+v %+v", e.st.Bindings, e.st.Ignored)
+		}
+		if e = a.sync(t, Options{}); len(e.st.Bindings) != 0 {
+			t.Fatalf("停止同步后，remote 变了也不应自动绑回来: %+v", e.st.Bindings)
+		}
+
+		e = a.sync(t, Options{Unignore: pid})
+		if len(e.st.Bindings) != 1 {
+			t.Fatalf("取消忽略后应按当前 remote 重新绑定: %+v", e.st.Bindings)
+		}
+		for p := range e.st.Bindings {
+			if p != "git:github.com/me/new" {
+				t.Fatalf("恢复后应使用新的 remote 身份，得到 %q", p)
+			}
+		}
+	})
+}
+
 // gitRepo 在 dir 建一个只有远程地址的 git 仓库（自动绑定只看远程地址）。
 func gitRepo(t *testing.T, dir, remote string) {
 	t.Helper()

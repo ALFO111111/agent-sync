@@ -1,6 +1,6 @@
 <template>
   <div v-if="notice" class="card">
-    <div :class="notice.error ? 'err' : 'ok'">{{ notice.text }}</div>
+    <div :class="notice.error ? 'err' : notice.pending ? 'muted' : 'ok'">{{ notice.text }}</div>
   </div>
 </template>
 

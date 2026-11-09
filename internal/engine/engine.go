@@ -153,6 +153,12 @@ func (e *Engine) Sync(ctx context.Context, opts Options) error {
 	} else {
 		if opts.Unignore != "" {
 			delete(e.st.Ignored, opts.Unignore)
+			// 目录级的"停止同步"记录一起清掉，本轮 discover 才能把它重新绑回来
+			for dir, pid := range e.st.StoppedDirs {
+				if pid == opts.Unignore {
+					delete(e.st.StoppedDirs, dir)
+				}
+			}
 			e.log.Printf("已取消忽略项目 %s", opts.Unignore)
 		}
 		e.discover()
