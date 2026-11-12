@@ -87,6 +87,12 @@ Claude Code 和 Codex 在两个系统上都支持，Windows 和 Mac 之间可以
 >
 > 同样可以用 `SHA256SUMS.txt` 核对 dmg。
 
+### Android（手机遥控）
+
+到 [Releases](https://github.com/ALFO111111/agent-sync/releases) 下载 `agent-sync-<版本>-android.apk`，传到手机上安装即可（第一次需要在系统设置里允许“安装未知来源应用”）。App 是正式签名包，不是 debug 包；后续版本用同一把密钥签名，可以直接覆盖安装，不用先卸载。
+
+装好后按手机上的提示扫码配对，就能遥控电脑上的 Claude Code / Codex 会话。电脑端要先在 **手机遥控** 页打开开关。
+
 **和 Windows 版的区别**：
 
 - Mac 版**没有菜单栏图标**（托盘库和 Wails 在 macOS 上冲突），关闭窗口就是退出程序。后台同步不受影响：登录时会自动启动一个没有窗口的后台进程（`agent-sync daemon`）负责实时同步，见下文的[同步触发](#triggers)。
