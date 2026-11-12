@@ -1,12 +1,17 @@
 package main
 
 import (
+	"runtime"
 	"testing"
 	"time"
 )
 
 // Windows 上路径不区分大小写；会话索引里的盘符可能是小写，手机也可能发大写。
+// 用例里的路径是 Windows 写法，靠 filepath.Separator 判断是否在目录内，macOS/Linux 上跑不出真实语义。
 func TestCwdAllowedCaseInsensitive(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics")
+	}
 	s := &sessionService{
 		allowed:     []string{`d:\developProject\agent-sync`, `C:\Users\me`},
 		allowedTime: time.Now(),
