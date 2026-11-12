@@ -438,7 +438,7 @@ export default {
     name: '电脑显示名',
     nameHint: '手机里看到的名字',
     proxy: '代理（可选）',
-    proxyHint: '主机访问公网需要代理时填，例如 http://127.0.0.1:7890；留空会自动使用当前环境，或本机正在监听的 7890 / 7897 端口。',
+    proxyHint: '只有主机访问公网需要代理时才填，例如 http://127.0.0.1:7890；留空则直连（或沿用启动主机时的环境变量）。',
     claudeBin: 'Claude Code 路径（可选）',
     claudeBinHint: '留空自动查找；Windows 上通常是 nodejs 目录下的 claude.cmd。',
     bin: '主机组件路径（可选）',

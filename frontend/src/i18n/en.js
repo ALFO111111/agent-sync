@@ -439,7 +439,7 @@ export default {
     name: 'Display name',
     nameHint: 'The name shown on the phone',
     proxy: 'Proxy (optional)',
-    proxyHint: 'Set this when the host needs a proxy for internet access, e.g. http://127.0.0.1:7890. Empty means use the current environment or a local proxy listening on 7890 / 7897.',
+    proxyHint: 'Only set this when the host needs a proxy for internet access, e.g. http://127.0.0.1:7890. Empty means direct connection (or whatever environment the host was started with).',
     claudeBin: 'Claude Code path (optional)',
     claudeBinHint: 'Empty means auto-detect; on Windows it is usually claude.cmd in the nodejs folder.',
     bin: 'Host component path (optional)',

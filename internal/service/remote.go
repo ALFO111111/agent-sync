@@ -262,9 +262,6 @@ func RemoteEnsure(cfg *config.Config) error {
 		args = append(args, "-claude-bin", cfg.RemoteClaudeBin)
 	}
 	proxy := cfg.RemoteProxy
-	if proxy == "" {
-		proxy = detectProxy()
-	}
 	cmd := exec.Command(bin, args...)
 	hideWindow(cmd)
 	cmd.Env = os.Environ()
@@ -285,26 +282,6 @@ func RemoteEnsure(cfg *config.Config) error {
 	_ = logf.Close()
 	_ = cmd.Process.Release()
 	return nil
-}
-
-// detectProxy 找本机代理：先看环境变量，再看 Windows 上常见的本地代理端口。
-// 桌面程序从资源管理器启动时没有 VBS/终端里的代理环境，主机直连公网会失败。
-func detectProxy() string {
-	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
-		if v := os.Getenv(k); v != "" {
-			return v
-		}
-	}
-	if runtime.GOOS != "windows" {
-		return ""
-	}
-	for _, addr := range []string{"127.0.0.1:7890", "127.0.0.1:7897"} {
-		if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
-			c.Close()
-			return "http://" + addr
-		}
-	}
-	return ""
 }
 
 // zeroToEmpty 把 Go 的零值时间（0001-01-01）当成“没有”，免得界面显示成七十几万天前。
