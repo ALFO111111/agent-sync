@@ -77,7 +77,7 @@ func run(args []string) int {
 		}
 		return 0
 
-	case "invite", "pending", "devices", "status", "quit", "approve", "deny", "revoke", "rename", "sessions", "session-stop":
+	case "invite", "pending", "devices", "status", "quit", "approve", "deny", "revoke", "rename", "sessions", "session-stop", "rotate-key":
 		// 允许 -state/-lang 出现在任意位置（例如 approve ID -state DIR）。
 		dir := defaultStateDir()
 		lang := "zh-CN"
@@ -155,6 +155,8 @@ func pairDeepLink(invitation string) string {
 
 func printResponse(cmd string, resp ctlResponse) {
 	switch cmd {
+	case "rotate-key":
+		fmt.Println(i18n.T("已更换加密密钥，所有手机需要重新配对"))
 	case "invite":
 		fmt.Println(i18n.T("配对邀请（10 分钟内有效）："))
 		if err := renderQR(pairDeepLink(resp.Invitation), os.Stdout); err != nil {

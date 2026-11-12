@@ -159,6 +159,11 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 	case "status":
 		st := d.auth.State()
 		return ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Relay: d.relayURL}
+	case "rotate-key":
+		if err := d.host.RotateContentKey(); err != nil {
+			return ctlResponse{Error: err.Error()}
+		}
+		return ctlResponse{OK: true}
 	case "quit":
 		d.stop()
 		return ctlResponse{OK: true}

@@ -7,6 +7,7 @@
         <span class="badge" :class="st.running ? 'ok' : 'err'">{{ st.running ? t('remote.running') : t('remote.stopped') }}</span>
       </div>
       <div class="muted small">{{ t('remote.subtitle') }}</div>
+      <div class="muted small mt">{{ t('remote.encryptedHint') }}</div>
 
       <div v-if="st.running" class="info-grid">
         <div><div class="k">{{ t('remote.hostName') }}</div><div class="v">{{ st.hostName || '—' }}</div></div>
@@ -150,6 +151,10 @@
       <div class="row mt">
         <button class="primary" :disabled="busy" @click="saveConfig">{{ t('remote.save') }}</button>
         <span v-if="saved" class="ok small">{{ t('remote.saved') }}</span>
+      </div>
+      <div class="row wrap mt">
+        <button class="danger" :disabled="busy" @click="rotateKey">{{ t('remote.rotateKey') }}</button>
+        <span class="muted small">{{ t('remote.rotateKeyHint') }}</span>
       </div>
       <div class="warn-box mt">{{ t('remote.approvalWarn') }}</div>
     </div>
@@ -353,6 +358,20 @@ async function saveConfig() {
       await refresh()
     }
     ok(restart ? t('remote.savedOk') : t('remote.saved'))
+  } catch (e) {
+    fail(String(e))
+  } finally {
+    busy.value = false
+  }
+}
+
+async function rotateKey() {
+  if (!(await api.Confirm(t('remote.rotateKeyTitle'), t('remote.rotateKeyConfirm')))) return
+  busy.value = true
+  try {
+    await api.RotateRemoteKey()
+    await refresh()
+    ok(t('remote.rotateKeyDone'))
   } catch (e) {
     fail(String(e))
   } finally {

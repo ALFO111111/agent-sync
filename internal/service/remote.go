@@ -333,6 +333,21 @@ func RemoteStop() error {
 	return nil
 }
 
+// RemoteRotateKey 更换共享加密密钥；所有手机需要重新配对。
+func RemoteRotateKey(cfg *config.Config) error {
+	if err := RemoteEnsure(cfg); err != nil {
+		return err
+	}
+	resp, err := remoteDial(RemoteDir(), remoteRequest{Cmd: "rotate-key"}, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.New(resp.Error)
+	}
+	return nil
+}
+
 // RemoteInvite 生成一次性配对邀请（JSON）。
 func RemoteInvite(cfg *config.Config) (string, error) {
 	if err := RemoteEnsure(cfg); err != nil {

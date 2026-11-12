@@ -43,7 +43,7 @@ import (
 //	自动同步 RepairAutoSync（平时自动装好，不展示；GetStatus.autoSync=false 时界面才提示修复）
 //	日志     ReadLog  ClearLog  OpenLogFolder
 //	手机遥控 GetRemoteConfig  SaveRemoteConfig  GetRemoteStatus  StartRemote  StopRemote
-//	         CreateRemoteInvite  DecideRemote  RenameRemote  RevokeRemote  StopRemoteSession
+//	         CreateRemoteInvite  DecideRemote  RenameRemote  RevokeRemote  StopRemoteSession  RotateRemoteKey
 //	向导     DefaultDeviceName  Initialize
 //	更新     GetUpdateState  CheckUpdate  InstallUpdate（+ 事件 "update"、"update-progress"）  SkipUpdate  SetAutoUpdateCheck
 type App struct {
@@ -544,4 +544,13 @@ func (a *App) StopRemoteSession(key string) error {
 		return err
 	}
 	return service.RemoteStopSession(cfg, key)
+}
+
+// RotateRemoteKey 更换共享加密密钥；所有手机需要重新配对。
+func (a *App) RotateRemoteKey() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	return service.RemoteRotateKey(cfg)
 }

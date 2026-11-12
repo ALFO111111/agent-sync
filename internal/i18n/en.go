@@ -365,5 +365,6 @@ Options:
 	"未命名设备":           "Unnamed device",
 	"没有活动会话":          "No active sessions",
 	"已结束会话":           "Session stopped",
+	"已更换加密密钥，所有手机需要重新配对": "Encryption key rotated; all phones must pair again",
 	"(无标题)":           "(untitled)",
 }
