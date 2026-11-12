@@ -77,7 +77,7 @@ func run(args []string) int {
 		}
 		return 0
 
-	case "invite", "pending", "devices", "status", "quit", "approve", "deny", "revoke", "rename", "sessions", "session-stop", "rotate-key":
+	case "invite", "pending", "devices", "status", "quit", "approve", "deny", "revoke", "rename", "sessions", "session-stop", "rotate-key", "remove-device":
 		// 允许 -state/-lang 出现在任意位置（例如 approve ID -state DIR）。
 		dir := defaultStateDir()
 		lang := "zh-CN"
@@ -133,7 +133,7 @@ func buildRequest(cmd string, args []string) ctlRequest {
 		if len(args) > 0 {
 			req.ID = args[0]
 		}
-	case "revoke", "session-stop":
+	case "revoke", "session-stop", "remove-device":
 		if len(args) > 0 {
 			req.Ref = args[0]
 		}
@@ -157,6 +157,8 @@ func printResponse(cmd string, resp ctlResponse) {
 	switch cmd {
 	case "rotate-key":
 		fmt.Println(i18n.T("已更换加密密钥，所有手机需要重新配对"))
+	case "remove-device":
+		fmt.Println(i18n.T("已删除设备记录"))
 	case "invite":
 		fmt.Println(i18n.T("配对邀请（10 分钟内有效）："))
 		if err := renderQR(pairDeepLink(resp.Invitation), os.Stdout); err != nil {

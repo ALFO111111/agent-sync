@@ -11,12 +11,17 @@
     "android:build": "cap sync android && cd android && gradlew.bat assembleDebug"
   },
   "dependencies": {
+    "@capacitor-community/speech-recognition": "^7.0.1",
+    "@capacitor-mlkit/barcode-scanning": "^7.5.0",
     "@capacitor/android": "^7.4.3",
     "@capacitor/app": "^7.0.2",
+    "@capacitor/camera": "^7.0.5",
     "@capacitor/core": "^7.4.3",
     "@noble/ciphers": "^2.4.0",
     "@noble/ed25519": "^3.2.0",
     "@noble/hashes": "^2.4.0",
+    "dompurify": "^3.4.17",
+    "marked": "^18.2.0",
     "vue": "^3.5.13"
   },
   "devDependencies": {

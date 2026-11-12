@@ -262,6 +262,18 @@ export class Session {
     return reply.overview || null
   }
 
+  // 打开老会话时加载历史消息。
+  async history(tool, cwd, sessionId) {
+    const id = Math.random().toString(16).slice(2, 12)
+    this.link.send({ v: 1, type: 'session.history', id, tool, cwd, sessionId })
+    const reply = await this.link.until(
+      m => ((m.type === 'session.history' && m.id === id) || (m.type === 'session.error' && m.id === id)),
+      20000,
+    )
+    if (reply.type !== 'session.history') throw new Error(reply.error || 'history failed')
+    return reply.messages || []
+  }
+
   // 电脑端仍在运行的会话，断线重连后用来接回。
   async activeSessions() {
     const id = Math.random().toString(16).slice(2, 12)

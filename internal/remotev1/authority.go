@@ -408,6 +408,26 @@ func (a *Authority) Revoke(ref string) (Device, error) {
 	return Device{}, ErrDenied
 }
 
+// RemoveDevice 从白名单里彻底删除一台设备（撤销 + 删除记录）。
+func (a *Authority) RemoveDevice(ref string) (Device, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for idx := range a.state.Devices {
+		d := a.state.Devices[idx]
+		if d.ID == ref || d.Fingerprint == ref || d.PublicKey == ref {
+			a.state.Devices = append(a.state.Devices[:idx], a.state.Devices[idx+1:]...)
+			if err := a.saveLocked(); err != nil {
+				a.state.Devices = append(a.state.Devices, Device{})
+				copy(a.state.Devices[idx+1:], a.state.Devices[idx:])
+				a.state.Devices[idx] = d
+				return Device{}, err
+			}
+			return d, nil
+		}
+	}
+	return Device{}, ErrDenied
+}
+
 // Rename 修改设备备注名。
 func (a *Authority) Rename(ref, name string) (Device, error) {
 	a.mu.Lock()

@@ -76,6 +76,9 @@ type Envelope struct {
 	Size        int64    `json:"size,omitempty"`
 	Attachments []string `json:"attachments,omitempty"`
 
+	// 历史对话（打开老会话时）
+	Messages []HistoryMessage `json:"messages,omitempty"`
+
 	// 电脑概况（首页/设置，只读）
 	Overview *HostOverview `json:"overview,omitempty"`
 
@@ -124,6 +127,13 @@ type SessionEvent struct {
 	ApprovalID string `json:"approvalId,omitempty"`
 }
 
+// HistoryMessage 是历史对话里的一条（进入老会话时展示）。
+type HistoryMessage struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+	Time string `json:"time,omitempty"`
+}
+
 // SessionSink 由 cmd 层实现，把 Claude 会话能力接进协议；nil 表示不支持。
 type SessionSink interface {
 	Projects(tool string) ([]ProjectInfo, error)
@@ -136,6 +146,7 @@ type SessionSink interface {
 	Decide(key, approvalID string, allow bool) error
 	Subscribe(key string, since int64) ([]SessionEvent, <-chan SessionEvent, func(), error)
 	ActiveSessions() []ActiveInfo
+	History(tool, cwd, sessionID string) ([]HistoryMessage, error)
 }
 
 type session struct {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,15 +22,15 @@ import (
 
 // RemoteStatus 是手机遥控页展示的状态。
 type RemoteStatus struct {
-	Running  bool         `json:"running"`
-	HostID   string       `json:"hostId,omitempty"`
-	HostName string       `json:"hostName,omitempty"`
-	Relay    string       `json:"relay,omitempty"`
+	Running  bool            `json:"running"`
+	HostID   string          `json:"hostId,omitempty"`
+	HostName string          `json:"hostName,omitempty"`
+	Relay    string          `json:"relay,omitempty"`
 	Pending  []RemotePending `json:"pending,omitempty"`
 	Devices  []RemoteDevice  `json:"devices,omitempty"`
 	Active   []RemoteActive  `json:"active,omitempty"`
-	Dir      string       `json:"dir"`
-	BinPath  string       `json:"binPath,omitempty"`
+	Dir      string          `json:"dir"`
+	BinPath  string          `json:"binPath,omitempty"`
 }
 
 type RemotePending struct {
@@ -90,15 +91,15 @@ type remoteRequest struct {
 }
 
 type remoteResponse struct {
-	OK         bool           `json:"ok"`
-	Error      string         `json:"error,omitempty"`
-	Invitation string         `json:"invitation,omitempty"`
+	OK         bool            `json:"ok"`
+	Error      string          `json:"error,omitempty"`
+	Invitation string          `json:"invitation,omitempty"`
 	Pending    []RemotePending `json:"pending,omitempty"`
 	Devices    []RemoteDevice  `json:"devices,omitempty"`
 	Active     []RemoteActive  `json:"active,omitempty"`
-	HostID     string         `json:"hostId,omitempty"`
-	HostName   string         `json:"hostName,omitempty"`
-	Relay      string         `json:"relay,omitempty"`
+	HostID     string          `json:"hostId,omitempty"`
+	HostName   string          `json:"hostName,omitempty"`
+	Relay      string          `json:"relay,omitempty"`
 }
 
 func remoteDial(dir string, req remoteRequest, timeout time.Duration) (remoteResponse, error) {
@@ -204,8 +205,8 @@ func GetRemoteConfig() (*RemoteConfig, error) {
 	}
 	st := GetRemoteStatus(cfg)
 	return &RemoteConfig{
-		Relay:     cfg.RemoteRelay,
-		Public:    cfg.RemotePublic,
+		Relay:     DisplayRelayURL(cfg.RemoteRelay),
+		Public:    DisplayRelayURL(cfg.RemotePublic),
 		Name:      cfg.RemoteName,
 		ClaudeBin: cfg.RemoteClaudeBin,
 		Bin:       st.BinPath,
@@ -219,8 +220,19 @@ func SaveRemoteConfig(rc RemoteConfig) error {
 	if err != nil {
 		return err
 	}
-	cfg.RemoteRelay = strings.TrimSpace(rc.Relay)
-	cfg.RemotePublic = strings.TrimSpace(rc.Public)
+	relay, err := NormalizeRelayURL(rc.Relay)
+	if err != nil {
+		return err
+	}
+	public, err := NormalizeRelayURL(rc.Public)
+	if err != nil {
+		return err
+	}
+	if public == "" {
+		public = relay
+	}
+	cfg.RemoteRelay = relay
+	cfg.RemotePublic = public
 	cfg.RemoteName = strings.TrimSpace(rc.Name)
 	cfg.RemoteClaudeBin = strings.TrimSpace(rc.ClaudeBin)
 	cfg.RemoteProxy = strings.TrimSpace(rc.Proxy)
@@ -415,6 +427,72 @@ func RemoteStopSession(cfg *config.Config, key string) error {
 		return err
 	}
 	resp, err := remoteDial(RemoteDir(), remoteRequest{Cmd: "session-stop", Ref: key}, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.New(resp.Error)
+	}
+	return nil
+}
+
+// NormalizeRelayURL 把用户填的地址统一成主机连接用的 WebSocket 地址。
+// 支持 https://host、http://host、wss://host、ws://host；没有路径时补 /ws。
+func NormalizeRelayURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", i18n.Err("中转地址格式不对")
+	}
+	switch u.Scheme {
+	case "https":
+		u.Scheme = "wss"
+	case "http":
+		u.Scheme = "ws"
+	case "wss", "ws":
+	default:
+		return "", i18n.Err("中转地址只支持 http/https/ws/wss")
+	}
+	u.Fragment = ""
+	u.RawQuery = ""
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/ws"
+	}
+	return u.String(), nil
+}
+
+// DisplayRelayURL 把配置里的 wss 地址显示成用户习惯的 https://host 形式。
+func DisplayRelayURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	switch u.Scheme {
+	case "wss":
+		u.Scheme = "https"
+	case "ws":
+		u.Scheme = "http"
+	default:
+		return raw
+	}
+	if u.Path == "/ws" || u.Path == "/" {
+		u.Path = ""
+	}
+	return u.String()
+}
+
+// RemoteRemoveDevice 从主机白名单里彻底删除一台设备。
+func RemoteRemoveDevice(cfg *config.Config, ref string) error {
+	if err := RemoteEnsure(cfg); err != nil {
+		return err
+	}
+	resp, err := remoteDial(RemoteDir(), remoteRequest{Cmd: "remove-device", Ref: ref}, 15*time.Second)
 	if err != nil {
 		return err
 	}

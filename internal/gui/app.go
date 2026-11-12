@@ -43,7 +43,7 @@ import (
 //	自动同步 RepairAutoSync（平时自动装好，不展示；GetStatus.autoSync=false 时界面才提示修复）
 //	日志     ReadLog  ClearLog  OpenLogFolder
 //	手机遥控 GetRemoteConfig  SaveRemoteConfig  GetRemoteStatus  StartRemote  StopRemote
-//	         CreateRemoteInvite  DecideRemote  RenameRemote  RevokeRemote  StopRemoteSession  RotateRemoteKey
+//	         CreateRemoteInvite  DecideRemote  RenameRemote  RevokeRemote  StopRemoteSession  RotateRemoteKey  RemoveRemoteDevice
 //	向导     DefaultDeviceName  Initialize
 //	更新     GetUpdateState  CheckUpdate  InstallUpdate（+ 事件 "update"、"update-progress"）  SkipUpdate  SetAutoUpdateCheck
 type App struct {
@@ -553,4 +553,13 @@ func (a *App) RotateRemoteKey() error {
 		return err
 	}
 	return service.RemoteRotateKey(cfg)
+}
+
+// RemoveRemoteDevice 从主机白名单里彻底删除一台设备；手机需要重新配对。
+func (a *App) RemoveRemoteDevice(ref string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	return service.RemoteRemoveDevice(cfg, ref)
 }

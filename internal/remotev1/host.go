@@ -389,6 +389,20 @@ func (h *Host) handle(parent context.Context, ws *websocket.Conn) {
 				if s.write(Envelope{Type: "git.diff", ID: env.ID, Path: env.Path, Text: text, Truncated: truncated}) != nil {
 					return
 				}
+			case "session.history":
+				if h.Sessions == nil {
+					continue
+				}
+				msgs, err := h.Sessions.History(env.Tool, env.Cwd, env.ClaudeSessionID)
+				if err != nil {
+					if s.write(Envelope{Type: "session.error", ID: env.ID, Error: err.Error()}) != nil {
+						return
+					}
+					continue
+				}
+				if s.write(Envelope{Type: "session.history", ID: env.ID, Messages: msgs}) != nil {
+					return
+				}
 			case "session.active":
 				if h.Sessions == nil {
 					if s.write(Envelope{Type: "session.active", ID: env.ID}) != nil {
@@ -633,14 +647,28 @@ func (h *Host) Revoke(ref string) (Device, error) {
 	if err != nil {
 		return d, err
 	}
+	h.closeConnsFor(d.PublicKey)
+	return d, nil
+}
+
+// RemoveDevice 撤销并从白名单里彻底删除。
+func (h *Host) RemoveDevice(ref string) error {
+	d, err := h.Authority.RemoveDevice(ref)
+	if err != nil {
+		return err
+	}
+	h.closeConnsFor(d.PublicKey)
+	return nil
+}
+
+func (h *Host) closeConnsFor(pub string) {
 	h.mu.Lock()
-	for c, pub := range h.conns {
-		if pub == d.PublicKey {
+	defer h.mu.Unlock()
+	for c, p := range h.conns {
+		if p == pub {
 			c.Close()
 		}
 	}
-	h.mu.Unlock()
-	return d, nil
 }
 
 func (h *Host) readyEnvelope(deviceID string) Envelope {

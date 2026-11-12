@@ -129,6 +129,14 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 			return ctlResponse{Error: err.Error()}
 		}
 		return ctlResponse{OK: true, Device: &dev}
+	case "remove-device":
+		if req.Ref == "" {
+			return ctlResponse{Error: "missing ref"}
+		}
+		if err := d.host.RemoveDevice(req.Ref); err != nil {
+			return ctlResponse{Error: err.Error()}
+		}
+		return ctlResponse{OK: true}
 	case "rename":
 		if req.Ref == "" || req.Name == "" {
 			return ctlResponse{Error: "missing ref or name"}

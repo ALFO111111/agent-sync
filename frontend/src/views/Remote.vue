@@ -1,29 +1,82 @@
 <template>
   <div class="remote">
-    <!-- 状态：手机能不能连、连到哪 -->
+    <!-- 连接信息：默认只读展示，右上角进入编辑；编辑时表单就在最上面 -->
     <div class="card">
       <div class="card-head">
         <h3>{{ t('remote.title') }}</h3>
-        <span class="badge" :class="st.running ? 'ok' : 'err'">{{ st.running ? t('remote.running') : t('remote.stopped') }}</span>
+        <div class="row">
+          <span class="badge" :class="st.running ? 'ok' : 'err'">{{ st.running ? t('remote.running') : t('remote.stopped') }}</span>
+          <button v-if="!editing" class="sm ghost" :disabled="busy" @click="startEdit">
+            <NavIcon name="settings" :size="13" /> {{ t('remote.editInfo') }}
+          </button>
+        </div>
       </div>
       <div class="muted small">{{ t('remote.subtitle') }}</div>
       <div class="muted small mt">{{ t('remote.encryptedHint') }}</div>
 
-      <div v-if="st.running" class="info-grid">
-        <div><div class="k">{{ t('remote.hostName') }}</div><div class="v">{{ st.hostName || '—' }}</div></div>
-        <div><div class="k">{{ t('remote.relayAddr') }}</div><div class="v mono">{{ st.relay || '—' }}</div></div>
-        <div class="wide"><div class="k">{{ t('remote.hostId') }}</div><div class="v mono ellipsis">{{ st.hostId || '—' }}</div></div>
-      </div>
-      <div v-else-if="st.binPath" class="muted small mt">{{ t('remote.binFound', { path: st.binPath }) }}</div>
-      <div v-else class="err-box mt">{{ t('remote.binMissing') }}</div>
+      <template v-if="!editing">
+        <div v-if="st.running" class="info-grid">
+          <div><div class="k">{{ t('remote.hostName') }}</div><div class="v">{{ st.hostName || '—' }}</div></div>
+          <div><div class="k">{{ t('remote.relayAddr') }}</div><div class="v mono">{{ toDisplay(st.relay) || '—' }}</div></div>
+          <div class="wide"><div class="k">{{ t('remote.hostId') }}</div><div class="v mono ellipsis">{{ st.hostId || '—' }}</div></div>
+        </div>
+        <div v-else-if="st.binPath" class="muted small mt">{{ t('remote.binFound', { path: st.binPath }) }}</div>
+        <div v-else class="err-box mt">{{ t('remote.binMissing') }}</div>
 
-      <div class="row wrap mt">
-        <button v-if="!st.running" class="primary" :disabled="busy" @click="start">{{ busy ? t('common.working') : t('remote.start') }}</button>
-        <button v-else class="danger" :disabled="busy" @click="stop">{{ busy ? t('common.working') : t('remote.stop') }}</button>
-        <button class="primary" :disabled="busy || !st.running" @click="invite"><NavIcon name="device" :size="14" /> {{ t('remote.invite') }}</button>
-        <button class="sm ghost" :disabled="busy" @click="refresh">{{ t('common.refresh') }}</button>
-      </div>
+        <div class="row wrap mt">
+          <button v-if="!st.running" class="primary" :disabled="busy" @click="start">{{ busy ? t('common.working') : t('remote.start') }}</button>
+          <button v-else class="danger" :disabled="busy" @click="stop">{{ busy ? t('common.working') : t('remote.stop') }}</button>
+          <button class="primary" :disabled="busy || !st.running" @click="invite"><NavIcon name="device" :size="14" /> {{ t('remote.invite') }}</button>
+          <button class="sm ghost" :disabled="busy" @click="refresh">{{ t('common.refresh') }}</button>
+        </div>
+      </template>
+
+      <!-- 编辑态：就在最上面，不用翻到底 -->
+      <template v-else>
+        <div class="form-grid mt">
+          <div class="form-row">
+            <label>{{ t('remote.name') }}</label>
+            <input v-model.trim="form.name" :placeholder="t('remote.nameHint')" />
+          </div>
+          <div class="form-row wide">
+            <label>{{ t('remote.relay') }}</label>
+            <input v-model.trim="form.relay" placeholder="https://agent-sync.example.com" />
+            <div class="hint">{{ t('remote.relayHint') }}</div>
+          </div>
+          <div class="form-row wide">
+            <label>{{ t('remote.public') }}</label>
+            <input v-model.trim="form.public" placeholder="https://agent-sync.example.com" />
+            <div class="hint">{{ t('remote.publicHint') }}</div>
+          </div>
+          <div class="form-row">
+            <label>{{ t('remote.proxy') }}</label>
+            <input v-model.trim="form.proxy" placeholder="http://127.0.0.1:7890" />
+            <div class="hint">{{ t('remote.proxyHint') }}</div>
+          </div>
+          <div class="form-row">
+            <label>{{ t('remote.claudeBin') }}</label>
+            <input v-model.trim="form.claudeBin" :placeholder="t('remote.auto')" />
+            <div class="hint">{{ t('remote.claudeBinHint') }}</div>
+          </div>
+          <div class="form-row">
+            <label>{{ t('remote.bin') }}</label>
+            <input v-model.trim="form.bin" :placeholder="st.binPath || t('remote.auto')" />
+            <div class="hint">{{ t('remote.binHint') }}</div>
+          </div>
+        </div>
+        <div class="row wrap mt">
+          <button class="primary" :disabled="busy" @click="saveConfig">{{ t('remote.save') }}</button>
+          <button class="ghost" :disabled="busy" @click="cancelEdit">{{ t('common.cancel') }}</button>
+          <span v-if="saved" class="ok small">{{ t('remote.saved') }}</span>
+        </div>
+        <div class="row wrap mt">
+          <button class="danger" :disabled="busy" @click="rotateKey">{{ t('remote.rotateKey') }}</button>
+          <span class="muted small">{{ t('remote.rotateKeyHint') }}</span>
+        </div>
+      </template>
+
       <div v-if="err" class="err-box mt">{{ err }}</div>
+      <div class="warn-box mt">{{ t('remote.approvalWarn') }}</div>
     </div>
 
     <!-- 配对邀请：二维码 + 可复制的原文 -->
@@ -59,7 +112,7 @@
       </div>
     </div>
 
-    <!-- 已配对设备 -->
+    <!-- 已配对设备：可以重命名、删除 -->
     <div class="card">
       <div class="card-head">
         <h3>{{ t('remote.devices') }}</h3>
@@ -87,9 +140,9 @@
           <button class="sm primary" :disabled="busy" @click="saveName(d)">{{ t('remote.saveName') }}</button>
           <button class="sm ghost" @click="renaming = null">{{ t('common.cancel') }}</button>
         </template>
-        <template v-else-if="!d.revoked">
-          <button class="sm ghost" @click="startRename(d)">{{ t('remote.rename') }}</button>
-          <button class="sm danger" :disabled="busy" @click="revoke(d)">{{ t('remote.revoke') }}</button>
+        <template v-else>
+          <button v-if="!d.revoked" class="sm ghost" @click="startRename(d)">{{ t('remote.rename') }}</button>
+          <button class="sm danger" :disabled="busy" @click="removeDevice(d)">{{ t('remote.deleteDevice') }}</button>
         </template>
       </div>
     </div>
@@ -109,54 +162,6 @@
         </div>
         <button class="sm danger" :disabled="busy" @click="stopSession(a)">{{ t('remote.stopSession') }}</button>
       </div>
-    </div>
-
-    <!-- 连接设置（存在本机 config.json） -->
-    <div class="card">
-      <div class="card-head">
-        <h3>{{ t('remote.settings') }}</h3>
-        <span class="muted small">{{ t('remote.settingsHint') }}</span>
-      </div>
-      <div class="form-grid">
-        <div class="form-row wide">
-          <label>{{ t('remote.relay') }}</label>
-          <input v-model.trim="form.relay" placeholder="wss://agent-sync.example.com/ws" />
-          <div class="hint">{{ t('remote.relayHint') }}</div>
-        </div>
-        <div class="form-row wide">
-          <label>{{ t('remote.public') }}</label>
-          <input v-model.trim="form.public" placeholder="wss://agent-sync.example.com/ws" />
-          <div class="hint">{{ t('remote.publicHint') }}</div>
-        </div>
-        <div class="form-row">
-          <label>{{ t('remote.name') }}</label>
-          <input v-model.trim="form.name" :placeholder="t('remote.nameHint')" />
-        </div>
-        <div class="form-row">
-          <label>{{ t('remote.proxy') }}</label>
-          <input v-model.trim="form.proxy" placeholder="http://127.0.0.1:7890" />
-          <div class="hint">{{ t('remote.proxyHint') }}</div>
-        </div>
-        <div class="form-row">
-          <label>{{ t('remote.claudeBin') }}</label>
-          <input v-model.trim="form.claudeBin" :placeholder="t('remote.auto')" />
-          <div class="hint">{{ t('remote.claudeBinHint') }}</div>
-        </div>
-        <div class="form-row">
-          <label>{{ t('remote.bin') }}</label>
-          <input v-model.trim="form.bin" :placeholder="st.binPath || t('remote.auto')" />
-          <div class="hint">{{ t('remote.binHint') }}</div>
-        </div>
-      </div>
-      <div class="row mt">
-        <button class="primary" :disabled="busy" @click="saveConfig">{{ t('remote.save') }}</button>
-        <span v-if="saved" class="ok small">{{ t('remote.saved') }}</span>
-      </div>
-      <div class="row wrap mt">
-        <button class="danger" :disabled="busy" @click="rotateKey">{{ t('remote.rotateKey') }}</button>
-        <span class="muted small">{{ t('remote.rotateKeyHint') }}</span>
-      </div>
-      <div class="warn-box mt">{{ t('remote.approvalWarn') }}</div>
     </div>
 
     <Notice :notice="notice" />
@@ -180,6 +185,7 @@ const form = ref({ relay: '', public: '', name: '', claudeBin: '', bin: '', prox
 const busy = ref(false)
 const err = ref('')
 const saved = ref(false)
+const editing = ref(false)
 const invitation = ref(null)
 const renaming = ref(null)
 const newName = ref('')
@@ -190,14 +196,26 @@ const MODES = {
   readonly: 'remote.modes.readonly', default: 'remote.modes.default', acceptEdits: 'remote.modes.acceptEdits',
   plan: 'remote.modes.plan', auto: 'remote.modes.auto', bypassPermissions: 'remote.modes.full',
   edit: 'remote.modes.edit', full: 'remote.modes.full',
-  // Claude 进程实际使用的模式名；只读在 CLI 里叫 dontAsk。
   dontAsk: 'remote.modes.readonly',
-  // Codex 沙箱模式。
   'read-only': 'remote.modes.readonly', 'workspace-write': 'remote.modes.edit', 'danger-full-access': 'remote.modes.full',
 }
 const modeLabel = (m) => (MODES[m] ? t(MODES[m]) : m || '—')
 const shortFP = (fp) => (fp && fp.length > 20 ? fp.slice(0, 10) + '…' + fp.slice(-8) : fp || '')
 const when = (iso) => fromNow(Date.parse(iso) || 0)
+
+// 配置里的 wss 地址在界面上显示成 https，方便填写。
+function toDisplay(raw) {
+  if (!raw) return ''
+  try {
+    const u = new URL(raw)
+    if (u.protocol === 'wss:') u.protocol = 'https:'
+    else if (u.protocol === 'ws:') u.protocol = 'http:'
+    if (u.pathname === '/ws') u.pathname = ''
+    return u.toString().replace(/\/$/, '')
+  } catch {
+    return raw
+  }
+}
 
 async function loadConfig() {
   try {
@@ -211,13 +229,11 @@ async function refresh() {
   try {
     const next = await api.GetRemoteStatus()
     st.value = next
-    // 主机由开机脚本启动、界面还没保存过设置时，用主机的实际值补上空档。
     if (next.running) {
-      if (!form.value.relay) form.value.relay = next.relay || ''
-      if (!form.value.public) form.value.public = next.relay || ''
+      if (!form.value.relay) form.value.relay = toDisplay(next.relay)
+      if (!form.value.public) form.value.public = toDisplay(next.relay)
       if (!form.value.name) form.value.name = next.hostName || ''
     }
-    // 第一次拿到主机的实际值后记下来：之后只有用户真的改了连接设置才重启主机。
     if (!loaded) loaded = JSON.stringify(form.value)
     err.value = ''
   } catch (e) {
@@ -225,18 +241,28 @@ async function refresh() {
   }
 }
 
+function startEdit() {
+  loadConfig()
+  saved.value = false
+  editing.value = true
+}
+
+function cancelEdit() {
+  editing.value = false
+  loadConfig()
+}
+
 async function start() {
-  if (!form.value.relay || !form.value.public) {
+  if (!form.value.relay) {
     fail(t('remote.needConfig'))
     return
   }
   busy.value = true
   try {
-    // 主机没跑时表单里可能是上次自动填进去的地址：先保存再启动，免得提示“没配置中转”。
     await api.SaveRemoteConfig(form.value)
     loaded = JSON.stringify(form.value)
     await api.StartRemote()
-    await new Promise((r) => setTimeout(r, 600)) // 守护进程要一点时间把控制端口写出来
+    await new Promise((r) => setTimeout(r, 600))
     await refresh()
     ok(t('remote.started'))
   } catch (e) {
@@ -313,13 +339,13 @@ async function saveName(d) {
   }
 }
 
-async function revoke(d) {
-  if (!(await api.Confirm(t('remote.revokeTitle'), t('remote.revokeConfirm', { name: d.name || t('remote.unnamed') })))) return
+async function removeDevice(d) {
+  if (!(await api.Confirm(t('remote.deleteTitle'), t('remote.deleteConfirm', { name: d.name || t('remote.unnamed') })))) return
   busy.value = true
   try {
-    await api.RevokeRemote(d.id)
+    await api.RemoveRemoteDevice(d.id)
     await refresh()
-    ok(t('remote.revoked'))
+    ok(t('remote.deletedDevice'))
   } catch (e) {
     fail(String(e))
   } finally {
@@ -350,13 +376,14 @@ async function saveConfig() {
     loaded = JSON.stringify(form.value)
     saved.value = true
     if (restart) {
-      // 中转地址之类改了要重启守护进程才生效；重启前先等它退出。
       await api.StopRemote()
       await new Promise((r) => setTimeout(r, 800))
       await api.StartRemote()
       await new Promise((r) => setTimeout(r, 600))
       await refresh()
     }
+    await loadConfig()
+    editing.value = false
     ok(restart ? t('remote.savedOk') : t('remote.saved'))
   } catch (e) {
     fail(String(e))
@@ -379,7 +406,6 @@ async function rotateKey() {
   }
 }
 
-// 页面开着时每 3 秒刷新一次（手机那边的批准请求、在线状态要及时看到）
 let active = false
 function schedule() {
   clearInterval(timer)
