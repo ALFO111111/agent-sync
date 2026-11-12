@@ -13,7 +13,7 @@ import (
 
 const (
 	// InvitationTTL 配对邀请有效期。扫码要快，降低泄露窗口。
-	InvitationTTL  = 5 * time.Minute
+	InvitationTTL  = 10 * time.Minute
 	maxInvitations = 8
 	maxPending     = 8
 	maxDevices     = 128
@@ -40,6 +40,7 @@ type State struct {
 	PrivateKey string   `json:"privateKey"`
 	Route      string   `json:"route"`
 	Credential string   `json:"credential"`
+	ContentKey string   `json:"contentKey,omitempty"` // 手机与电脑共用的内容加密密钥（base64）
 	Devices    []Device `json:"devices"`
 }
 
@@ -57,6 +58,7 @@ type Invitation struct {
 	Credential string    `json:"credential"`
 	ID         string    `json:"id"`
 	Secret     string    `json:"secret"`
+	ContentKey string    `json:"contentKey"`
 	HostID     string    `json:"hostId"`
 	HostName   string    `json:"hostName"`
 	Expires    time.Time `json:"expires"`
@@ -69,8 +71,11 @@ func (i Invitation) Validate() error {
 		u.RawQuery != "" || u.Fragment != "" || u.Path != "/ws" {
 		return ErrDenied
 	}
-	if i.Version != 1 || len(i.Route) != 64 || len(i.Credential) != 64 ||
+	if i.Version != 2 || len(i.Route) != 64 || len(i.Credential) != 64 ||
 		len(i.ID) != 64 || len(i.Secret) != 64 {
+		return ErrDenied
+	}
+	if _, err := ParseContentKey(i.ContentKey); err != nil {
 		return ErrDenied
 	}
 	return nil
@@ -141,6 +146,17 @@ func NewAuthority(store Store, url string) (*Authority, error) {
 		a.state.PrivateKey = id.PrivateBase64()
 		created = true
 	}
+	if a.state.ContentKey == "" {
+		key, err := NewContentKey()
+		if err != nil {
+			return nil, err
+		}
+		a.state.ContentKey = key.Base64()
+		created = true
+	}
+	if _, err := ParseContentKey(a.state.ContentKey); err != nil {
+		return nil, ErrDenied
+	}
 	if a.state.Version != 1 || a.state.HostID == "" || a.state.Route == "" || a.state.Credential == "" {
 		return nil, ErrDenied
 	}
@@ -180,18 +196,37 @@ func (a *Authority) Invite(hostName string) (Invitation, error) {
 		return Invitation{}, ErrDenied
 	}
 	inv := Invitation{
-		Version:    1,
+		Version:    2,
 		URL:        a.url,
 		Route:      a.state.Route,
 		Credential: a.state.Credential,
 		ID:         RandomToken(32),
 		Secret:     RandomToken(32),
+		ContentKey: a.state.ContentKey,
 		HostID:     a.state.HostID,
 		HostName:   hostName,
 		Expires:    now.Add(InvitationTTL),
 	}
 	a.invitations[inv.ID] = inv
 	return inv, nil
+}
+
+// RotateContentKey 生成新密钥并作废所有未使用的邀请。
+func (a *Authority) RotateContentKey() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	key, err := NewContentKey()
+	if err != nil {
+		return err
+	}
+	old := a.state.ContentKey
+	a.state.ContentKey = key.Base64()
+	if err := a.saveLocked(); err != nil {
+		a.state.ContentKey = old
+		return err
+	}
+	a.invitations = map[string]Invitation{}
+	return nil
 }
 
 // Device 按公钥查找设备（包括已撤销的）。
@@ -229,7 +264,7 @@ func (a *Authority) BeginPair(inviteID, secret, pubB64, name string) (*Pending, 
 			if d.Revoked {
 				return nil, ErrDenied
 			}
-			return nil, ErrDenied // 已配对设备应走直接连接
+			break // 未撤销：允许重新配对（换加密密钥后恢复），仍然要走人工批准
 		}
 	}
 	if len(a.pending) >= maxPending || len(a.state.Devices) >= maxDevices {
@@ -300,17 +335,40 @@ func (a *Authority) Decide(id string, approve bool) error {
 				other.Result <- false
 			}
 		}
-		a.state.Devices = append(a.state.Devices, Device{
-			ID:          RandomToken(12),
-			Name:        p.DeviceName,
-			PublicKey:   p.DevicePub,
-			Fingerprint: p.Fingerprint,
-			CreatedAt:   now,
-		})
-		if err := a.saveLocked(); err != nil {
-			// 保存失败则回滚白名单，邀请保留可重试。
-			a.state.Devices = a.state.Devices[:len(a.state.Devices)-1]
-			ok = false
+		existing := -1
+		for i, d := range a.state.Devices {
+			if d.PublicKey == p.DevicePub {
+				existing = i
+				break
+			}
+		}
+		if existing >= 0 {
+			// 重新配对：只更新名字和最近连接时间，不重复添加。
+			dev := &a.state.Devices[existing]
+			if dev.Revoked {
+				ok = false
+			} else {
+				oldName := dev.Name
+				dev.Name = p.DeviceName
+				dev.LastSeen = now
+				if err := a.saveLocked(); err != nil {
+					dev.Name = oldName
+					ok = false
+				}
+			}
+		} else {
+			a.state.Devices = append(a.state.Devices, Device{
+				ID:          RandomToken(12),
+				Name:        p.DeviceName,
+				PublicKey:   p.DevicePub,
+				Fingerprint: p.Fingerprint,
+				CreatedAt:   now,
+			})
+			if err := a.saveLocked(); err != nil {
+				// 保存失败则回滚白名单，邀请保留可重试。
+				a.state.Devices = a.state.Devices[:len(a.state.Devices)-1]
+				ok = false
+			}
 		}
 	}
 	p.Result <- ok

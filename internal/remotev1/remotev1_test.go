@@ -278,11 +278,88 @@ func dIDFor(t *testing.T, a *Authority, pub string) string {
 	return d.ID
 }
 
+func TestInvitationCarriesContentKey(t *testing.T) {
+	a, err := NewAuthority(nil, "wss://relay.example.com/ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := a.Invite("Mac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.Version != 2 {
+		t.Fatalf("version = %d", inv.Version)
+	}
+	if _, err := ParseContentKey(inv.ContentKey); err != nil {
+		t.Fatalf("content key invalid: %v", err)
+	}
+	if inv.Expires.Sub(time.Now()) < 9*time.Minute {
+		t.Fatalf("invitation too short: %v", inv.Expires)
+	}
+}
+
+func TestRepairExistingDevice(t *testing.T) {
+	a, err := NewAuthority(nil, "wss://relay.example.com/ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := mustPub(t)
+	inv, _ := a.Invite("Mac")
+	p, err := a.BeginPair(inv.ID, inv.Secret, pub, "Phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Decide(p.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Devices()) != 1 {
+		t.Fatal("device not stored")
+	}
+
+	// 换密钥后重新配对：同一个身份、新名字，应更新而不是重复。
+	inv2, _ := a.Invite("Mac")
+	p2, err := a.BeginPair(inv2.ID, inv2.Secret, pub, "Phone New")
+	if err != nil {
+		t.Fatalf("re-pair rejected: %v", err)
+	}
+	if err := a.Decide(p2.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	devs := a.Devices()
+	if len(devs) != 1 || devs[0].Name != "Phone New" {
+		t.Fatalf("devices = %+v", devs)
+	}
+}
+
+func TestRotateContentKey(t *testing.T) {
+	a, _ := NewAuthority(nil, "wss://relay.example.com/ws")
+	before := a.State().ContentKey
+	inv, _ := a.Invite("Mac")
+	if err := a.RotateContentKey(); err != nil {
+		t.Fatal(err)
+	}
+	after := a.State().ContentKey
+	if before == after {
+		t.Fatal("key did not change")
+	}
+	// 旧邀请作废。
+	if _, err := a.BeginPair(inv.ID, inv.Secret, mustPub(t), "x"); err == nil {
+		t.Fatal("old invitation still valid")
+	}
+	inv2, err := a.Invite("Mac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv2.ContentKey != after {
+		t.Fatal("new invitation uses old key")
+	}
+}
+
 func TestInvitationEncoding(t *testing.T) {
 	inv := Invitation{
-		Version: 1, URL: "wss://relay.example.com/ws",
+		Version: 2, URL: "wss://relay.example.com/ws",
 		Route: RandomToken(32), Credential: RandomToken(32),
-		ID: RandomToken(32), Secret: RandomToken(32),
+		ID: RandomToken(32), Secret: RandomToken(32), ContentKey: mustKey(t).Base64(),
 		HostID: "h", HostName: "Mac", Expires: time.Now().Add(time.Minute),
 	}
 	enc := EncodeInvitation(inv)
