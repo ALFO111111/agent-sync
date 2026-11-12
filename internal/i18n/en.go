@@ -256,7 +256,7 @@ Options:
 	"用 %s claim <项目ID> <本机路径> 认领，或 %s ignore <项目ID> 忽略": "Claim with %s claim <project-id> <local-path>, or ignore with %s ignore <project-id>",
 
 	// 2026-10：只追加拉取、备份、修改口令、开机自启、会话搜索
-	"本机文件刚被修改": "The local file was just modified",
+	"本机文件刚被修改":                    "The local file was just modified",
 	"%s/%s 正在被修改，本轮先跳过，下次同步再处理":   "%s/%s is being modified; skipped this round, will retry next sync",
 	"找不到这份备份（可能已超过保留期被清理）":        "Backup not found (it may have been cleaned up after the retention period)",
 	"这条记录没有备份文件":                  "This entry has no backup file",
@@ -334,4 +334,36 @@ Options:
 	"发现新版本 %s（当前 %s）: %s":       "New version %s available (current %s): %s",
 	"下载中":                       "Downloading",
 	"已更新到 %s。正在运行的图形界面要关掉重新打开才是新版本。": "Updated to %s. A running app window must be closed and reopened to use the new version.",
+
+	// relay / remotechannel（远程中转原型）
+	"中转协议被拒绝":                "Relay protocol rejected",
+	"远程授权被拒绝":                "Remote authorization denied",
+	"远程身份验证失败":               "Remote identity rejected",
+	"中转监听地址（仅回环）":            "Relay listen address (loopback only)",
+	"中转自动退出时间（最多一小时，0 表示常驻）": "Automatic relay shutdown (max 1 hour, 0 means run until stopped)",
+	"中转参数无效：仅允许回环地址和最多一小时":   "Invalid relay options: loopback address only, at most one hour",
+	"中转监听失败":                 "Relay failed to listen",
+	"中转已启动（仅转发密文）：%s":        "Relay ready (opaque forwarding): %s",
+	"中转已停止":                  "Relay stopped",
+
+	// agent-sync-host（远程主机守护）
+	"主机守护已启动（%s）":     "Host daemon started (%s)",
+	"正在重连中转（%s）":      "Reconnecting to relay (%s)",
+	"主机守护已停止":         "Host daemon stopped",
+	"命令失败：%s":         "Command failed: %s",
+	"配对邀请（10 分钟内有效）：": "Pairing invitation (valid for 10 minutes):",
+	"用手机扫码，或复制这行：":    "Scan it with the phone, or copy this line:",
+	"没有待批准请求":         "No pending requests",
+	"待批准请求：":          "Pending requests:",
+	"没有已配对设备":         "No paired devices",
+	"离线":              "offline",
+	"在线":              "online",
+	"已撤销设备 %s":        "Revoked device %s",
+	"已重命名设备 %s":       "Renamed device %s",
+	"主机 %s，中转 %s":     "Host %s, relay %s",
+	"设备已连接：%s（%s）":    "Device connected: %s (%s)",
+	"未命名设备":           "Unnamed device",
+	"没有活动会话":          "No active sessions",
+	"已结束会话":           "Session stopped",
+	"(无标题)":           "(untitled)",
 }

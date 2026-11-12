@@ -50,6 +50,7 @@ import Wizard from '@/views/Wizard.vue'
 import Home from '@/views/Home.vue'
 import Sessions from '@/views/Sessions.vue'
 import Bindings from '@/views/Bindings.vue'
+import Remote from '@/views/Remote.vue'
 import Backups from '@/views/Backups.vue'
 import Conflicts from '@/views/Conflicts.vue'
 import Settings from '@/views/Settings.vue'
@@ -61,7 +62,7 @@ import logo from '@/assets/logo.png'
 
 const { t } = useI18n()
 const initialized = ref(true)
-const VIEWS = { home: Home, sessions: Sessions, content: Content, bindings: Bindings, backups: Backups, conflicts: Conflicts, settings: Settings, logs: Logs }
+const VIEWS = { home: Home, sessions: Sessions, content: Content, bindings: Bindings, remote: Remote, backups: Backups, conflicts: Conflicts, settings: Settings, logs: Logs }
 // 侧边栏"冲突"的数字：只数当前工具的（首页状态里带着，不用另外请求）
 const conflictCount = computed(() => resources.status.data?.toolConflicts?.[toolState.current] || 0)
 

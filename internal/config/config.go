@@ -39,6 +39,14 @@ type Config struct {
 	ContentApproved map[string]bool `json:"contentApproved,omitempty"` // CC Switch 自动同步开着，仍明确选择由本工具同步
 	CCSwitchKnown   bool            `json:"ccSwitchKnown,omitempty"`   // 是否已有明确的 CC Switch 检测结果
 	CCSwitchEnabled bool            `json:"ccSwitchEnabled,omitempty"` // 上次明确的 Auto Sync 状态，用于发现关闭后重新开启
+
+	// 手机遥控（本地主机组件）
+	RemoteRelay     string `json:"remoteRelay,omitempty"`     // 主机连接的中转地址
+	RemotePublic    string `json:"remotePublic,omitempty"`    // 邀请里写给手机的公网地址
+	RemoteName      string `json:"remoteName,omitempty"`      // 电脑显示名
+	RemoteClaudeBin string `json:"remoteClaudeBin,omitempty"` // claude 可执行文件（空=自动）
+	RemoteBin       string `json:"remoteBin,omitempty"`       // agent-sync-host 可执行文件（空=自动）
+	RemoteProxy     string `json:"remoteProxy,omitempty"`     // 启动主机组件时用的 HTTP(S) 代理（空=继承当前环境）
 }
 
 // homeEnv 测试/沙箱用的数据目录环境变量；改名前的 CLAUDE_CODE_SYNC_HOME 也认。

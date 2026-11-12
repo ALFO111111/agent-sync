@@ -42,6 +42,8 @@ import (
 //	语言     GetLanguage  SetLanguage（立即生效：界面、托盘、错误信息、日志）
 //	自动同步 RepairAutoSync（平时自动装好，不展示；GetStatus.autoSync=false 时界面才提示修复）
 //	日志     ReadLog  ClearLog  OpenLogFolder
+//	手机遥控 GetRemoteConfig  SaveRemoteConfig  GetRemoteStatus  StartRemote  StopRemote
+//	         CreateRemoteInvite  DecideRemote  RenameRemote  RevokeRemote  StopRemoteSession
 //	向导     DefaultDeviceName  Initialize
 //	更新     GetUpdateState  CheckUpdate  InstallUpdate（+ 事件 "update"、"update-progress"）  SkipUpdate  SetAutoUpdateCheck
 type App struct {
@@ -475,4 +477,71 @@ func (a *App) OpenLogFolder() error { return platform.OpenFolder(filepath.Dir(lo
 // ListProjectsCached 项目总览，只用本机缓存、不联网（项目页先用它秒开，再调 ListProjects 刷新）。
 func (a *App) ListProjectsCached() (*service.ProjectsOverview, error) {
 	return service.LoadProjectsCached()
+}
+
+// ---------- 手机遥控 ----------
+
+// 桌面端的“手机遥控”页：界面只负责展示和点按钮，真正的守护进程是 agent-sync-host。
+// 这里的方法都是薄包装：读写设置、启动/停止主机、生成配对邀请、批准/撤销设备、结束会话。
+
+func (a *App) GetRemoteConfig() (*service.RemoteConfig, error) { return service.GetRemoteConfig() }
+
+func (a *App) SaveRemoteConfig(rc service.RemoteConfig) error { return service.SaveRemoteConfig(rc) }
+
+func (a *App) GetRemoteStatus() service.RemoteStatus {
+	cfg, err := config.Load()
+	if err != nil {
+		return service.RemoteStatus{}
+	}
+	return service.GetRemoteStatus(cfg)
+}
+
+func (a *App) StartRemote() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	return service.RemoteStart(cfg)
+}
+
+func (a *App) StopRemote() error { return service.RemoteStop() }
+
+func (a *App) CreateRemoteInvite() (*service.RemoteInvitation, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	return service.RemoteInviteQR(cfg)
+}
+
+func (a *App) DecideRemote(id string, approve bool) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	return service.RemoteDecide(cfg, id, approve)
+}
+
+func (a *App) RenameRemote(ref, name string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	return service.RemoteRename(cfg, ref, name)
+}
+
+func (a *App) RevokeRemote(ref string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	return service.RemoteRevoke(cfg, ref)
+}
+
+func (a *App) StopRemoteSession(key string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	return service.RemoteStopSession(cfg, key)
 }

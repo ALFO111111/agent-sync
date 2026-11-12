@@ -3,7 +3,7 @@ import { reactive } from 'vue'
 
 // 侧边栏分三段：首页（所有工具一起看）；当前工具的页面（跟着顶部的工具切换走）；通用设置。
 export const TOOL_PAGES = ['sessions', 'content', 'conflicts', 'backups']
-export const GENERAL_PAGES = ['bindings', 'settings', 'logs']
+export const GENERAL_PAGES = ['bindings', 'remote', 'settings', 'logs']
 export const PAGES = ['home', ...TOOL_PAGES, ...GENERAL_PAGES]
 
 export const nav = reactive({
