@@ -7,6 +7,40 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-12
+
+### 新增 / Added
+
+- 手机遥控全链路：安卓 App 通过公网中转连接电脑端主机，支持扫码配对、设备白名单、撤销、多台电脑切换；手机只做查看和遥控，聊天、读文件、改代码都在你选中的电脑上执行
+  Phone remote: the Android app connects to the desktop host through the public relay, with QR pairing, device allowlist/revoke and multiple computers; the phone only views and controls — chatting, reading files and editing code all happen on the selected computer
+- 手机端会话：项目/会话列表、继续历史会话、流式回复、工具调用、权限模式切换、逐操作审批、停止回合、断线自动重连并接回原会话
+  Mobile sessions: project/session lists, resuming past conversations, streaming replies, tool calls, permission modes, per-action approvals, stop, automatic reconnect and session resumption
+- 手机端首页/设置：电脑概况、工具与同步内容、只读电脑信息；手机端文件浏览与 git diff（只读）
+  Mobile home/settings: computer overview, tools and synced content, read-only computer info; read-only file browsing and git diff
+- 对话级附件：手机拍照、相册或文件选择后加密上传，图片作为内联图片内容块发给 Claude，文本内联，其他文件临时落盘并由 Claude 读取；不写入项目目录，会话结束自动清理
+  Conversation-level attachments: take a photo, pick from the gallery or choose a file; images are sent as inline image blocks, text is inlined, other files are staged temporarily for Claude to read; nothing is written into the project and everything is cleaned up with the session
+- 内层端到端加密：手机与电脑共用一把密钥，所有应用帧使用 AES-256-GCM 加密并校验序号；桌面页可更换密钥，换后手机需重新扫码
+  Inner end-to-end encryption: the phone and computer share a key and every application frame is AES-256-GCM encrypted with sequence checks; the desktop page can rotate the key, after which phones must pair again
+- 移动端体验重构：三标签（首页/会话/设置）、深色/浅色主题、参考 DeepSeek 的聊天页、Markdown 渲染、语音输入、应用内扫码、系统返回逐级退出
+  Mobile UI overhaul: three tabs (Home/Sessions/Settings), dark/light themes, a DeepSeek-style chat page, Markdown rendering, voice input, an in-app QR scanner and system back navigation
+- 桌面“手机遥控”页：连接信息置顶可编辑，中转地址支持 `https://域名` 自动转换，已配对设备可删除
+  Desktop “Phone remote” page: connection settings are editable at the top, an `https://domain` relay address is converted automatically, and paired devices can be deleted
+- 安卓正式包：Release 里新增签名后的 release APK（非 debug 包）
+  Android release build: a signed release APK (not a debug build) is now attached to the release
+
+### 修复 / Fixed
+
+- 大文件读取改为分块，避免超过单帧上限撑断连接
+  Large file reads are chunked so they no longer exceed the frame limit and drop the connection
+- Windows 路径比较改为不区分大小写，会话索引里的小写盘符不会再被误判为“不在允许目录”
+  Windows paths are compared case-insensitively, so lowercase drive letters from the session index are no longer rejected
+- 从桌面启动主机时隐藏控制台窗口；去掉自动猜测代理，只在明确配置或环境变量存在时使用，避免代理故障时反而断连
+  The console window is hidden when the host is started from the desktop; proxy autodetection was removed so a broken local proxy cannot take the host offline
+- 修复登录自启脚本的进程检测，主机重启后手机可自动恢复连接
+  Fixed the login startup script’s process check; phones reconnect automatically after a host restart
+- 邀请有效期统一为 10 分钟；附件上传完成后不会提前失效；打开系统文件选择器导致断线时会上传重试
+  Invitations are now valid for 10 minutes; attachments no longer expire before sending; uploads retry after the system file picker briefly drops the connection
+
 ## [0.5.2] - 2026-11-09
 
 ### 修复 / Fixed

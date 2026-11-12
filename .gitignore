@@ -21,3 +21,6 @@ CLAUDE.local.md
 .claude/settings.local.json
 # 开发过程中的设计笔记（AI 工作记录），只留在本地
 docs/superpowers/
+
+# 发布产物（本地打包用，不进仓库）
+/dist/
