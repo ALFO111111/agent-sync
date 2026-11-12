@@ -68,6 +68,9 @@ type Envelope struct {
 	Events          []SessionEvent `json:"events,omitempty"`
 	Active          []ActiveInfo   `json:"active,omitempty"`
 
+	// 电脑概况（首页/设置，只读）
+	Overview *HostOverview `json:"overview,omitempty"`
+
 	// 只读文件浏览 / git diff
 	Path      string      `json:"path,omitempty"`
 	Entries   []FileEntry `json:"entries,omitempty"`

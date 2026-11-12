@@ -39,7 +39,10 @@ let claudeSessionId = ""
 let lastSeq = 0
 let reconnecting = false
 const mode = ref("dontAsk")
-const tab = ref("home")
+const tab = ref("overview")
+const overview = ref(null)
+const overviewBusy = ref(false)
+const overviewErr = ref("")
 const theme = ref(localStorage.getItem("ags:theme") || "system")
 const msgBox = ref(null)
 const filesOpen = ref(false)
@@ -119,6 +122,8 @@ async function doPair(invitation) {
   message.value = `已连接到 ${pairing.value.name}`
   log('配对成功，已保存设备授权')
   attachClose()
+  loadOverview()
+  tab.value = 'overview'
 }
 
 async function doReconnect() {
@@ -131,9 +136,31 @@ async function doReconnect() {
   message.value = `已连接到 ${pairing.value.name}`
   log('重连成功')
   attachClose()
+  loadOverview()
 }
 
 // 网络断开时自动重连，并尝试接回原会话。
+// 电脑概况：连接成功后拉一次；用户也可以手动刷新。
+async function loadOverview() {
+  if (!session) return
+  overviewBusy.value = true
+  try {
+    overview.value = await session.overview()
+    overviewErr.value = ''
+  } catch (err) {
+    overviewErr.value = err.message || String(err)
+  } finally {
+    overviewBusy.value = false
+  }
+}
+
+const CATEGORY_LABELS = {
+  rules: '规则', plans: '计划', skills: '技能', agents: '代理', commands: '命令',
+  tasks: '任务', settings: '设置', mcp: 'MCP', 'legacy-skills': '旧技能', sessions: '会话',
+}
+const catLabel = c => CATEGORY_LABELS[c] || c
+const fmtTime = iso => (iso ? new Date(iso).toLocaleString() : '从未')
+
 function attachClose() {
   if (!session || !session.link) return
   session.link.onClose = () => {
@@ -155,6 +182,7 @@ async function autoReconnect() {
         state.value = 'connected'
         message.value = `已重新连接 ${pairing.value.name}`
         log('自动重连成功')
+        loadOverview()
         if (chatOpen.value && sessionKey.value && claudeSessionId) {
           try {
             const list = await session.activeSessions()
@@ -438,6 +466,7 @@ onMounted(async () => {
     await initCrypto()
     await loadOrCreateDevice()
     await loadPairing()
+    if (!pairing.value) tab.value = 'home' // 还没配对时先停在“连接”页
     log(`设备指纹 ${fingerprint(device.value.publicKey).slice(0, 12)}`)
     if (!secure.value) log('网页调试模式：密钥仅存于浏览器，非正式安全存储')
     if (Capacitor.isNativePlatform()) {
@@ -639,6 +668,44 @@ function decideApproval(item, allow) {
       </div>
       <span class="badge" :data-state="state">{{ statusLabel }}</span>
     </header>
+
+    <section v-show="tab === 'overview'" class="card">
+      <div class="chat-head">
+        <h2>首页</h2>
+        <button :disabled="overviewBusy || !connected" @click="loadOverview">{{ overviewBusy ? '刷新中…' : '刷新' }}</button>
+      </div>
+      <p v-if="overviewErr" class="hint">{{ overviewErr }}</p>
+      <p v-if="!overview" class="hint">{{ connected ? '加载中…' : '连接电脑后显示电脑概况' }}</p>
+      <template v-else>
+        <dl class="meta">
+          <div><dt>电脑</dt><dd>{{ overview.hostName || (pairing && pairing.name) || '-' }}</dd></div>
+          <div><dt>同步设备名</dt><dd>{{ overview.deviceName || '-' }}</dd></div>
+          <div><dt>系统</dt><dd>{{ overview.system || '-' }}</dd></div>
+          <div><dt>项目 / 会话</dt><dd>{{ overview.projects }} / {{ overview.sessions }}</dd></div>
+          <div><dt>上次同步</dt><dd>{{ fmtTime(overview.lastSync) }}</dd></div>
+          <div>
+            <dt>本轮同步</dt>
+            <dd>上传 {{ overview.stats?.pushed || 0 }} · 下载 {{ overview.stats?.pulled || 0 }} · 失败 {{ overview.stats?.errors || 0 }}</dd>
+          </div>
+        </dl>
+        <h2>工具</h2>
+        <ul class="devices">
+          <li v-for="t in overview.tools" :key="t.id">
+            <span>{{ t.name }}</span>
+            <span class="small">{{ t.installed ? `${t.projects} 项目 · ${t.sessionCount} 会话` : '未安装' }}</span>
+            <span class="tag" :data-online="t.installed">{{ t.contentOn }}/{{ t.contentTotal }} 内容</span>
+          </li>
+        </ul>
+        <h2>同步内容</h2>
+        <ul class="devices">
+          <li v-for="c in overview.content" :key="c.tool + '/' + c.category">
+            <span>{{ catLabel(c.category) }}</span>
+            <span class="small">{{ c.tool === 'codex' ? 'Codex' : 'Claude Code' }}</span>
+            <span class="tag" :data-online="c.enabled">{{ c.enabled ? '开' : '关' }}</span>
+          </li>
+        </ul>
+      </template>
+    </section>
 
     <section v-show="tab === 'home'" class="card status">
       <p class="line">{{ message || '把电脑上生成的配对邀请粘贴到下面，或用手机相机扫码。' }}</p>
@@ -849,6 +916,15 @@ function decideApproval(item, allow) {
         <div><dt>已配对电脑</dt><dd>{{ pairing ? pairing.name : '未配对' }}</dd></div>
         <div v-if="device"><dt>设备指纹</dt><dd class="mono">{{ fingerprint(device.publicKey).slice(0, 16) }}…</dd></div>
       </dl>
+      <h2>电脑</h2>
+      <dl v-if="overview" class="meta">
+        <div><dt>电脑名</dt><dd>{{ overview.hostName || '-' }}</dd></div>
+        <div><dt>同步设备名</dt><dd>{{ overview.deviceName || '-' }}</dd></div>
+        <div><dt>系统</dt><dd>{{ overview.system || '-' }}</dd></div>
+        <div><dt>语言</dt><dd>{{ overview.language || '-' }}</dd></div>
+        <div><dt>数据目录</dt><dd class="mono small">{{ overview.dataDir || '-' }}</dd></div>
+      </dl>
+      <p v-else class="hint">连接电脑后显示电脑信息（只读）</p>
       <div class="actions">
         <button v-if="pairing" @click="disconnect">断开</button>
         <button v-if="pairing" class="ghost" @click="forget">清除配对</button>
@@ -857,6 +933,7 @@ function decideApproval(item, allow) {
     </section>
 
     <nav v-if="!chatOpen" class="tabbar">
+      <button :class="{ active: tab === 'overview' }" @click="tab = 'overview'">首页</button>
       <button :class="{ active: tab === 'home' }" @click="tab = 'home'">连接</button>
       <button :class="{ active: tab === 'sessions' }" @click="tab = 'sessions'">会话</button>
       <button :class="{ active: tab === 'settings' }" @click="tab = 'settings'">设置</button>

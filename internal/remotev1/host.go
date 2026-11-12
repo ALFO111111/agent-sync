@@ -34,6 +34,9 @@ type Host struct {
 	// Sessions 非空时提供服务端会话能力（v2）。
 	Sessions SessionSink
 
+	// Data 非空时提供只读的电脑概况（首页/设置）。
+	Data DataSink
+
 	mu    sync.Mutex
 	conns map[*websocket.Conn]string // 连接 → 设备公钥
 }
@@ -293,6 +296,24 @@ func (h *Host) handle(parent context.Context, ws *websocket.Conn) {
 				}
 			case "status":
 				if s.write(Envelope{Type: "status", ID: env.ID, DeviceID: device.ID, HostID: h.Authority.State().HostID, HostName: h.Name}) != nil {
+					return
+				}
+			case "data.overview":
+				if h.Data == nil {
+					if s.write(Envelope{Type: "data.overview", ID: env.ID, Error: "overview unsupported"}) != nil {
+						return
+					}
+					continue
+				}
+				ov, err := h.Data.Overview()
+				if err != nil {
+					if s.write(Envelope{Type: "data.overview", ID: env.ID, Error: err.Error()}) != nil {
+						return
+					}
+					continue
+				}
+				ov.HostName = h.Name
+				if s.write(Envelope{Type: "data.overview", ID: env.ID, Overview: &ov}) != nil {
 					return
 				}
 			case "fs.list":

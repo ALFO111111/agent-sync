@@ -57,6 +57,7 @@ func runDaemon(ctx context.Context, dir, dialURL, publicURL, hostName, claudeBin
 		svc = sessions
 		host.Sessions = sessions
 		host.Files = sessions
+		host.Data = sessions
 		defer sessions.Shutdown()
 	} else {
 		fmt.Fprintf(os.Stderr, "sessions disabled: %v\n", err)

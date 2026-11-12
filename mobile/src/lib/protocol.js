@@ -253,6 +253,15 @@ export class Session {
     return reply.devices || []
   }
 
+  // 电脑概况（首页/设置，只读）。
+  async overview() {
+    const id = Math.random().toString(16).slice(2, 12)
+    this.link.send({ v: 1, type: 'data.overview', id })
+    const reply = await this.link.until(m => m.type === 'data.overview' && m.id === id, 15000)
+    if (reply.error) throw new Error(reply.error)
+    return reply.overview || null
+  }
+
   // 电脑端仍在运行的会话，断线重连后用来接回。
   async activeSessions() {
     const id = Math.random().toString(16).slice(2, 12)
