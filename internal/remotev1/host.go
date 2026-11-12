@@ -37,6 +37,19 @@ type Host struct {
 	conns map[*websocket.Conn]string // 连接 → 设备公钥
 }
 
+// RotateContentKey 更换共享密钥并断开所有已连接的手机。
+func (h *Host) RotateContentKey() error {
+	if err := h.Authority.RotateContentKey(); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.conns {
+		c.Close()
+	}
+	return nil
+}
+
 func NewHost(id *Identity, a *Authority, url, name string, logf func(string, ...any)) *Host {
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -131,7 +144,14 @@ func (h *Host) attach(ctx context.Context, m relay.Control) {
 func (h *Host) handle(parent context.Context, ws *websocket.Conn) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	s := newSession(ws)
+	key, err := ParseContentKey(h.Authority.State().ContentKey)
+	if err != nil {
+		return
+	}
+	s, err := newSession(ws, key, ClientToHost, HostToClient)
+	if err != nil {
+		return
+	}
 	hello, err := s.readWith(15 * time.Second)
 	if err != nil || hello.Type != "hello" || len(hello.DevicePub) > 256 || len(hello.DeviceName) > 128 {
 		return

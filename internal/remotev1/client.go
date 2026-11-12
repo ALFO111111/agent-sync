@@ -48,7 +48,18 @@ func (c *Client) dial(ctx context.Context, pair bool) error {
 		ws.Close()
 		return err
 	}
-	s := newSession(ws)
+	key, err := ParseContentKey(inv.ContentKey)
+	if err != nil {
+		stop()
+		ws.Close()
+		return err
+	}
+	s, err := newSession(ws, key, HostToClient, ClientToHost)
+	if err != nil {
+		stop()
+		ws.Close()
+		return err
+	}
 	hello := Envelope{
 		Type:       "hello",
 		DevicePub:  c.Identity.PublicBase64(),

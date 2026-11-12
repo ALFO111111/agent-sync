@@ -1,6 +1,7 @@
 package remotev1
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -125,17 +126,28 @@ type SessionSink interface {
 }
 
 type session struct {
-	ws  *websocket.Conn
-	wmu sync.Mutex
+	ws   *websocket.Conn
+	wmu  sync.Mutex
+	seal *Sealer
+	open *Opener
 
 	window time.Time
 	count  int
 }
 
-func newSession(ws *websocket.Conn) *session {
+// newSession 建立一条加密会话：readDir 是对方→本端的方向，writeDir 是本端→对方。
+func newSession(ws *websocket.Conn, key ContentKey, readDir, writeDir Direction) (*session, error) {
+	seal, err := NewSealer(key, writeDir)
+	if err != nil {
+		return nil, err
+	}
+	open, err := NewOpener(key, readDir)
+	if err != nil {
+		return nil, err
+	}
 	ws.SetReadLimit(MaxFrame)
 	ws.SetPongHandler(func(string) error { return nil })
-	return &session{ws: ws, window: time.Now()}
+	return &session{ws: ws, seal: seal, open: open, window: time.Now()}, nil
 }
 
 func (s *session) read() (Envelope, error) { return s.readWith(ReadTimeout) }
@@ -162,7 +174,20 @@ func (s *session) readWith(d time.Duration) (Envelope, error) {
 	if len(b) == 0 || len(b) > MaxFrame {
 		return env, ErrProtocol
 	}
-	if json.Unmarshal(b, &env) != nil || env.V != ProtocolVersion || env.Type == "" {
+	// 外层只接受密文帧；明文（旧客户端或降级尝试）一律拒绝。
+	var outer Envelope
+	if json.Unmarshal(b, &outer) != nil || outer.V != ProtocolVersion || outer.Type != "enc" {
+		return env, ErrProtocol
+	}
+	raw, err := base64.StdEncoding.DecodeString(outer.Data)
+	if err != nil {
+		return env, ErrProtocol
+	}
+	plain, err := s.open.Open(raw)
+	if err != nil {
+		return env, ErrProtocol
+	}
+	if json.Unmarshal(plain, &env) != nil || env.V != ProtocolVersion || env.Type == "" || env.Type == "enc" {
 		return env, ErrProtocol
 	}
 	return env, nil
@@ -170,7 +195,19 @@ func (s *session) readWith(d time.Duration) (Envelope, error) {
 
 func (s *session) write(env Envelope) error {
 	env.V = ProtocolVersion
-	b, err := json.Marshal(env)
+	plain, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	if len(plain) > MaxPlain {
+		return ErrProtocol
+	}
+	sealed, err := s.seal.Seal(plain)
+	if err != nil {
+		return err
+	}
+	outer := Envelope{V: ProtocolVersion, Type: "enc", Data: base64.StdEncoding.EncodeToString(sealed)}
+	b, err := json.Marshal(outer)
 	if err != nil {
 		return err
 	}

@@ -2,7 +2,13 @@ package remotev1
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func mustKey(t *testing.T) ContentKey {
@@ -114,5 +120,65 @@ func TestSealRejectsOversizeAndParseKey(t *testing.T) {
 	}
 	if _, err := s.Seal(nil); err == nil {
 		t.Fatal("empty accepted")
+	}
+}
+
+func TestSessionWireIsEncrypted(t *testing.T) {
+	up := websocket.Upgrader{}
+	got := make(chan []byte, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, b, err := c.ReadMessage()
+		if err == nil {
+			got <- b
+		}
+	}))
+	defer srv.Close()
+
+	url := "ws" + strings.TrimPrefix(srv.URL, "http")
+	ws, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	s, err := newSession(ws, mustKey(t), ClientToHost, HostToClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.write(Envelope{Type: "echo", Data: "TOPSECRET"}); err != nil {
+		t.Fatal(err)
+	}
+	raw := <-got
+	if bytes.Contains(raw, []byte("TOPSECRET")) || !bytes.Contains(raw, []byte(`"enc"`)) {
+		t.Fatalf("wire leaked plaintext: %s", raw)
+	}
+}
+
+func TestSessionRejectsPlaintextFrame(t *testing.T) {
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, _ := up.Upgrade(w, r, nil)
+		defer c.Close()
+		_ = c.WriteMessage(websocket.BinaryMessage, []byte(`{"v":1,"type":"hello"}`))
+		time.Sleep(200 * time.Millisecond)
+	}))
+	defer srv.Close()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http")
+	ws, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	s, err := newSession(ws, mustKey(t), HostToClient, ClientToHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.readWith(2 * time.Second); err == nil {
+		t.Fatal("plaintext frame accepted")
 	}
 }
