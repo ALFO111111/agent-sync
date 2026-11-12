@@ -151,3 +151,25 @@ done
 		}
 	}
 }
+
+func TestUserContent(t *testing.T) {
+	if got := UserContent("hello", nil); got != "hello" {
+		t.Fatalf("plain text = %#v", got)
+	}
+	img := ImageAttachment{MediaType: "image/png", Data: []byte("abc")}
+	raw := UserContent("看图", []ImageAttachment{img})
+	blocks, ok := raw.([]map[string]any)
+	if !ok || len(blocks) != 2 || blocks[0]["type"] != "text" || blocks[1]["type"] != "image" {
+		t.Fatalf("blocks = %#v", raw)
+	}
+	src := blocks[1]["source"].(map[string]any)
+	if src["media_type"] != "image/png" || src["data"] != "YWJj" {
+		t.Fatalf("image source = %#v", src)
+	}
+	// 只发图片、没有文字：不应出现空文本块。
+	raw = UserContent("  ", []ImageAttachment{img})
+	blocks = raw.([]map[string]any)
+	if len(blocks) != 1 || blocks[0]["type"] != "image" {
+		t.Fatalf("image-only blocks = %#v", blocks)
+	}
+}

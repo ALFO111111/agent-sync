@@ -243,6 +243,39 @@ textarea {
   gap: 6px;
 }
 
+.attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+}
+.attach-chip button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 2px;
+  font-size: 14px;
+}
+.attach-names {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.hidden-file { display: none; }
+.composer .clip { flex: none; padding: 0 10px; }
+
 .log ol {
   margin: 0;
   padding: 0;

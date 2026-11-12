@@ -36,6 +36,13 @@ const chatOpen = ref(false)
 const sessionKey = ref('')
 const chat = ref([])
 const chatInput = ref('')
+const fileInput = ref(null)
+const attachments = ref([]) // {attachId,name,size,kind}
+const attachBusy = ref(false)
+const attachProgress = ref(0)
+const MAX_ATTACH = 3
+const MAX_ATTACH_BYTES = 10 * 1024 * 1024
+const TEXT_EXT = /\.(txt|md|markdown|json|jsonl|js|mjs|cjs|ts|tsx|jsx|vue|css|scss|html|xml|yml|yaml|toml|ini|cfg|conf|log|csv|tsv|py|go|rs|java|kt|kts|c|h|cpp|hpp|cs|php|rb|sh|bash|zsh|ps1|bat|cmd|sql|graphql|proto|tex)$/i
 let currentAssistant = null
 let claudeSessionId = ""
 let lastSeq = 0
@@ -300,6 +307,7 @@ async function teardown() {
   chatOpen.value = false
   sessionKey.value = ''
   overview.value = null
+  attachments.value = []
   state.value = 'idle'
 }
 
@@ -466,14 +474,117 @@ function handleSessionEvent(ev) {
   }
 }
 
+function fileKind(file) {
+  const type = file.type || ''
+  if (type.startsWith('image/')) return 'image'
+  if (type.startsWith('text/') || TEXT_EXT.test(file.name || '')) return 'text'
+  return 'binary'
+}
+
+// 图片先在手机压缩，避免几 MB 的截图占用太长时间。
+async function compressImage(file) {
+  const bitmap = await createImageBitmap(file)
+  const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85))
+  if (!blob) throw new Error('compress failed')
+  return {
+    data: new Uint8Array(await blob.arrayBuffer()),
+    name: (file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg',
+  }
+}
+
+// 打开系统文件选择器可能让 WebView 暂停、连接断开；等自动重连后再继续。
+async function waitConnected(timeout = 20000) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (state.value === 'connected' && session) return true
+    await new Promise(r => setTimeout(r, 300))
+  }
+  return false
+}
+
+function pickFiles() {
+  fileInput.value?.click()
+}
+
+async function onPickFiles(ev) {
+  const files = [...(ev.target.files || [])]
+  ev.target.value = ''
+  if (!files.length) return
+  if (attachments.value.length + files.length > MAX_ATTACH) {
+    log(`每轮最多 ${MAX_ATTACH} 个附件`)
+    return
+  }
+  attachBusy.value = true
+  try {
+    for (const file of files) {
+      let data
+      let name = file.name || 'attachment'
+      let mediaType = file.type || 'application/octet-stream'
+      const kind = fileKind(file)
+      if (kind === 'image') {
+        try {
+          const small = await compressImage(file)
+          data = small.data
+          name = small.name
+          mediaType = 'image/jpeg'
+        } catch {
+          data = new Uint8Array(await file.arrayBuffer())
+        }
+      } else {
+        data = new Uint8Array(await file.arrayBuffer())
+      }
+      if (data.byteLength > MAX_ATTACH_BYTES) {
+        log(`附件 ${name} 超过 10 MB，已跳过`)
+        continue
+      }
+      attachProgress.value = 0
+      let attachId = ''
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          attachId = await session.uploadAttachment(
+            { name, mediaType, kind, data },
+            p => { attachProgress.value = p },
+          )
+          break
+        } catch (err) {
+          const msg = String(err?.message || err)
+          if (attempt === 0 && msg.includes('disconnected') && await waitConnected(20000)) {
+            log('连接已恢复，重试上传…')
+            continue
+          }
+          throw err
+        }
+      }
+      attachments.value.push({ attachId, name, size: data.byteLength, kind })
+      log(`附件已上传：${name}`)
+    }
+  } catch (err) {
+    log('附件上传失败：' + (err.message || err))
+  } finally {
+    attachBusy.value = false
+    attachProgress.value = 0
+  }
+}
+
+function removeAttachment(id) {
+  attachments.value = attachments.value.filter(a => a.attachId !== id)
+}
+
 function sendChat() {
   run(async () => {
     const text = chatInput.value.trim()
-    if (!text || !sessionKey.value) return
-    chat.value.push({ role: 'user', text })
+    const ids = attachments.value.map(a => a.attachId)
+    if ((!text && !ids.length) || !sessionKey.value) return
+    chat.value.push({ role: 'user', text, files: attachments.value.map(a => a.name) })
     chatInput.value = ''
     currentAssistant = null
-    session.sendTurn(sessionKey.value, text)
+    session.sendTurn(sessionKey.value, text, ids)
+    attachments.value = []
     scrollChat()
   })
 }
@@ -494,6 +605,7 @@ function closeChat() {
     }
     sessionKey.value = ''
     chatOpen.value = false
+    attachments.value = []
   })
 }
 
@@ -938,12 +1050,22 @@ function decideApproval(item, allow) {
           <template v-else>
             <span class="who">{{ m.role === 'user' ? '我' : m.role === 'assistant' ? toolLabels[tool] : '' }}</span>
             <span class="text">{{ m.text }}</span>
+            <span v-if="m.files && m.files.length" class="attach-names">附件：{{ m.files.join('、') }}</span>
           </template>
         </li>
       </ol>
+      <div v-if="attachments.length || attachBusy" class="attach-row">
+        <span v-for="a in attachments" :key="a.attachId" class="attach-chip">
+          {{ a.name }}
+          <button :disabled="attachBusy" @click="removeAttachment(a.attachId)">×</button>
+        </span>
+        <span v-if="attachBusy" class="small">上传中 {{ Math.round(attachProgress * 100) }}%</span>
+      </div>
       <div class="composer">
+        <button class="clip" :disabled="!connected || attachBusy" @click="pickFiles">附件</button>
+        <input ref="fileInput" type="file" multiple class="hidden-file" @change="onPickFiles" />
         <input v-model="chatInput" placeholder="直接问 Claude；写文件、执行命令受当前权限模式限制" @keyup.enter="sendChat" />
-        <button class="primary" :disabled="!connected" @click="sendChat">发送</button>
+        <button class="primary" :disabled="!connected || attachBusy" @click="sendChat">发送</button>
       </div>
     </section>
 

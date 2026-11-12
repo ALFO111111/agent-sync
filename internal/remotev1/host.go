@@ -2,6 +2,7 @@ package remotev1
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"sync"
 	"time"
@@ -449,11 +450,49 @@ func (h *Host) handle(parent context.Context, ws *websocket.Conn) {
 				if s.write(Envelope{Type: "session.ready", ID: env.ID, SessionKey: key, ClaudeSessionID: claudeID}) != nil {
 					return
 				}
+			case "attach.begin":
+				id, chunk, err := s.beginAttachment(env.Name, env.MediaType, env.Kind, env.Size)
+				if err != nil {
+					if s.write(Envelope{Type: "attach.error", ID: env.ID, Error: err.Error()}) != nil {
+						return
+					}
+					continue
+				}
+				if s.write(Envelope{Type: "attach.begin", ID: env.ID, AttachID: id, ChunkSize: chunk}) != nil {
+					return
+				}
+			case "attach.chunk":
+				raw, err := base64.StdEncoding.DecodeString(env.Data)
+				if err == nil {
+					err = s.addAttachmentChunk(env.AttachID, env.Seq, raw)
+				}
+				if err != nil {
+					if s.write(Envelope{Type: "attach.error", AttachID: env.AttachID, Error: err.Error()}) != nil {
+						return
+					}
+				}
+			case "attach.end":
+				if _, err := s.finishAttachment(env.AttachID); err != nil {
+					if s.write(Envelope{Type: "attach.error", ID: env.ID, AttachID: env.AttachID, Error: err.Error()}) != nil {
+						return
+					}
+					continue
+				}
+				if s.write(Envelope{Type: "attach.ready", ID: env.ID, AttachID: env.AttachID}) != nil {
+					return
+				}
 			case "turn.send":
 				if h.Sessions == nil {
 					continue
 				}
-				if err := h.Sessions.Send(env.SessionKey, env.Text); err != nil {
+				atts, err := s.takeAttachments(env.Attachments)
+				if err != nil {
+					if s.write(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()}) != nil {
+						return
+					}
+					continue
+				}
+				if err := h.Sessions.Send(env.SessionKey, env.Text, atts); err != nil {
 					if s.write(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()}) != nil {
 						return
 					}

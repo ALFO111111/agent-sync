@@ -68,6 +68,14 @@ type Envelope struct {
 	Events          []SessionEvent `json:"events,omitempty"`
 	Active          []ActiveInfo   `json:"active,omitempty"`
 
+	// 对话级附件（临时，不落项目目录）
+	Name        string   `json:"name,omitempty"`
+	MediaType   string   `json:"mediaType,omitempty"`
+	AttachID    string   `json:"attachId,omitempty"`
+	ChunkSize   int      `json:"chunkSize,omitempty"`
+	Size        int64    `json:"size,omitempty"`
+	Attachments []string `json:"attachments,omitempty"`
+
 	// 电脑概况（首页/设置，只读）
 	Overview *HostOverview `json:"overview,omitempty"`
 
@@ -122,7 +130,7 @@ type SessionSink interface {
 	Sessions(tool, cwd string) ([]SessionInfo, error)
 	Start(tool, cwd, resumeID, mode string) (key, claudeSessionID string, err error)
 	SetMode(key, mode string) (newKey, claudeSessionID string, err error)
-	Send(key, text string) error
+	Send(key, text string, atts []Attachment) error
 	Stop(key string) error
 	Close(key string) error
 	Decide(key, approvalID string, allow bool) error
@@ -135,6 +143,8 @@ type session struct {
 	wmu  sync.Mutex
 	seal *Sealer
 	open *Opener
+
+	uploads map[string]*pendingAttachment // 本连接上的临时附件（随连接释放）
 
 	window time.Time
 	count  int

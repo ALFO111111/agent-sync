@@ -3,6 +3,7 @@ package agentsessions
 import (
 	"bufio"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ALFO111111/agent-sync/internal/i18n"
 	"github.com/ALFO111111/agent-sync/internal/remotev1"
 )
 
@@ -217,8 +219,43 @@ type Runner struct {
 	stderr   string
 }
 
-// Send 写一条用户消息。
-func (r *Runner) Send(text string) error {
+// ImageAttachment 是一张随消息发送的图片（对话级，不落盘）。
+type ImageAttachment struct {
+	MediaType string
+	Data      []byte
+}
+
+// UserContent 生成 stream-json 的用户消息内容：
+// 没有图片时保持原来的字符串形式；有图片时用内容块数组（和 Claude Code 粘贴图片一致）。
+func UserContent(text string, images []ImageAttachment) any {
+	if len(images) == 0 {
+		return text
+	}
+	blocks := make([]map[string]any, 0, len(images)+1)
+	if strings.TrimSpace(text) != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": text})
+	}
+	for _, img := range images {
+		blocks = append(blocks, map[string]any{
+			"type": "image",
+			"source": map[string]any{
+				"type":       "base64",
+				"media_type": img.MediaType,
+				"data":       base64.StdEncoding.EncodeToString(img.Data),
+			},
+		})
+	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, map[string]any{"type": "text", "text": i18n.T("请看附件。")})
+	}
+	return blocks
+}
+
+// Send 写一条纯文本用户消息。
+func (r *Runner) Send(text string) error { return r.SendWith(text, nil) }
+
+// SendWith 写一条带可选图片的用户消息。
+func (r *Runner) SendWith(text string, images []ImageAttachment) error {
 	r.mu.Lock()
 	closed := r.closed
 	r.mu.Unlock()
@@ -229,7 +266,7 @@ func (r *Runner) Send(text string) error {
 		"type": "user",
 		"message": map[string]any{
 			"role":    "user",
-			"content": text,
+			"content": UserContent(text, images),
 		},
 	})
 	r.lastActive = time.Now()

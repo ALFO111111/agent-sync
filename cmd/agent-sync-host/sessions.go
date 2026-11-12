@@ -25,6 +25,9 @@ type sessionService struct {
 	mu          sync.Mutex
 	allowed     []string
 	allowedTime time.Time
+
+	attachMu   sync.Mutex
+	attachDirs map[string][]string // 会话 key → 本轮附件临时目录（会话结束清理）
 }
 
 func newSessionService(bin string, extraPath []string) (*sessionService, error) {
@@ -193,20 +196,29 @@ func (s *sessionService) codexRunner(key string) *agentsessions.CodexRunner {
 	return s.codex.Get(key)
 }
 
-func (s *sessionService) Send(key, text string) error {
-	if strings.TrimSpace(text) == "" || len(text) > 8000 {
+func (s *sessionService) Send(key, text string, atts []remotev1.Attachment) error {
+	if (strings.TrimSpace(text) == "" && len(atts) == 0) || len(text) > 8000 {
 		return errors.New("invalid message")
 	}
 	if r := s.claudeRunner(key); r != nil {
-		return r.Send(text)
+		extra, images, err := s.prepareAttachments(key, atts, true)
+		if err != nil {
+			return err
+		}
+		return r.SendWith(text+extra, images)
 	}
 	if r := s.codexRunner(key); r != nil {
-		return r.Send(text)
+		extra, _, err := s.prepareAttachments(key, atts, false)
+		if err != nil {
+			return err
+		}
+		return r.Send(text + extra)
 	}
 	return errors.New("session not found")
 }
 
 func (s *sessionService) Stop(key string) error {
+	defer s.cleanupAttachments(key)
 	if r := s.claudeRunner(key); r != nil {
 		r.Stop()
 		return nil
@@ -219,6 +231,7 @@ func (s *sessionService) Stop(key string) error {
 }
 
 func (s *sessionService) Close(key string) error {
+	defer s.cleanupAttachments(key)
 	if r := s.claudeRunner(key); r != nil {
 		r.Stop()
 		return nil
@@ -343,4 +356,5 @@ func (s *sessionService) Shutdown() {
 	if s.codex != nil {
 		s.codex.StopAll()
 	}
+	s.cleanupAllAttachments()
 }

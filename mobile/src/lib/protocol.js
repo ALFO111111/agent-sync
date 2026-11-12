@@ -325,8 +325,35 @@ export class Session {
     for (const ev of reply.events || []) handler({ ...ev, sessionKey })
   }
 
-  sendTurn(sessionKey, text) {
-    this.link.send({ v: 1, type: 'turn.send', sessionKey, text })
+  // 对话级附件：分块上传到电脑，返回 attachId；不会写入项目目录。
+  async uploadAttachment({ name, mediaType, kind, data }, onProgress) {
+    const id = Math.random().toString(16).slice(2, 12)
+    this.link.send({ v: 1, type: 'attach.begin', id, name, mediaType, kind, size: data.byteLength })
+    const begin = await this.link.until(
+      m => ((m.type === 'attach.begin' || m.type === 'attach.error') && m.id === id),
+      20000,
+    )
+    if (begin.type !== 'attach.begin' || !begin.attachId) throw new Error(begin.error || 'attach failed')
+    const chunk = begin.chunkSize || 6 * 1024
+    for (let off = 0, seq = 0; off < data.byteLength; off += chunk, seq++) {
+      const part = data.subarray(off, Math.min(off + chunk, data.byteLength))
+      this.link.send({ v: 1, type: 'attach.chunk', attachId: begin.attachId, seq, data: b64(part) })
+      onProgress?.(Math.min(1, (off + part.byteLength) / data.byteLength))
+      // 服务端每秒最多 20 帧；每块之后让一下，留出心跳和其他消息的余量。
+      await new Promise(r => setTimeout(r, 70))
+    }
+    const endID = Math.random().toString(16).slice(2, 12)
+    this.link.send({ v: 1, type: 'attach.end', id: endID, attachId: begin.attachId })
+    const ready = await this.link.until(
+      m => ((m.type === 'attach.ready' || m.type === 'attach.error') && m.id === endID),
+      20000,
+    )
+    if (ready.type !== 'attach.ready') throw new Error(ready.error || 'attach failed')
+    return begin.attachId
+  }
+
+  sendTurn(sessionKey, text, attachments = []) {
+    this.link.send({ v: 1, type: 'turn.send', sessionKey, text, attachments })
   }
 
   stopTurn(sessionKey) {
