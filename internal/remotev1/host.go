@@ -2,6 +2,7 @@ package remotev1
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -314,14 +315,26 @@ func (h *Host) handle(parent context.Context, ws *websocket.Conn) {
 					_ = s.write(Envelope{Type: "fs.error", ID: env.ID, Error: "files unsupported"})
 					continue
 				}
-				text, truncated, binary, err := h.Files.Read(env.Cwd, env.Path)
+				text, truncated, binary, next, err := h.Files.Read(env.Cwd, env.Path, env.Offset)
 				if err != nil {
 					if s.write(Envelope{Type: "fs.error", ID: env.ID, Error: err.Error()}) != nil {
 						return
 					}
 					continue
 				}
-				if s.write(Envelope{Type: "fs.read", ID: env.ID, Path: env.Path, Text: text, Truncated: truncated, Binary: binary}) != nil {
+				resp := Envelope{Type: "fs.read", ID: env.ID, Path: env.Path, Text: text,
+					Truncated: truncated, Binary: binary, Next: next}
+				// JSON 转义后可能超过加密帧上限：继续缩小本块，保证连接不断。
+				for len(resp.Text) > 0 {
+					b, _ := json.Marshal(resp)
+					if len(b) <= MaxPlain {
+						break
+					}
+					resp.Text = resp.Text[:len(resp.Text)/2]
+					resp.Next = env.Offset + int64(len(resp.Text))
+					resp.Truncated = true
+				}
+				if s.write(resp) != nil {
 					return
 				}
 			case "git.status":

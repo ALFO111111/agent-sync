@@ -74,6 +74,8 @@ type Envelope struct {
 	Changes   []GitChange `json:"changes,omitempty"`
 	Truncated bool        `json:"truncated,omitempty"`
 	Binary    bool        `json:"binary,omitempty"`
+	Offset    int64       `json:"offset,omitempty"`
+	Next      int64       `json:"next,omitempty"`
 }
 
 // DeviceInfo 是给手机看的最小设备信息，不含公钥。
@@ -246,7 +248,7 @@ type GitChange struct {
 // FileSink 由 cmd 层实现：只读文件浏览和 git diff。
 type FileSink interface {
 	List(cwd, rel string) ([]FileEntry, error)
-	Read(cwd, rel string) (text string, truncated, binary bool, err error)
+	Read(cwd, rel string, offset int64) (text string, truncated, binary bool, next int64, err error)
 	GitStatus(cwd string) ([]GitChange, error)
 	GitDiff(cwd, rel string) (text string, truncated bool, err error)
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 
 const (
 	maxFileRead = 256 * 1024
+	maxChunk    = 4 * 1024
+	maxDiff     = 8 * 1024
 	maxList     = 1000
 )
 
@@ -83,29 +86,38 @@ func (s *sessionService) List(cwd, rel string) ([]remotev1.FileEntry, error) {
 	return out, nil
 }
 
-func (s *sessionService) Read(cwd, rel string) (string, bool, bool, error) {
+// Read 按 offset 返回最多 maxChunk 字节；next 是下一块的偏移。
+// 单帧有大小上限，大文件必须分块，否则会把加密连接撑断。
+func (s *sessionService) Read(cwd, rel string, offset int64) (string, bool, bool, int64, error) {
 	_, target, err := s.resolveFile(cwd, rel)
 	if err != nil {
-		return "", false, false, err
+		return "", false, false, 0, err
 	}
 	fi, err := os.Stat(target)
 	if err != nil {
-		return "", false, false, err
+		return "", false, false, 0, err
 	}
 	if fi.IsDir() {
-		return "", false, false, errors.New("is a directory")
+		return "", false, false, 0, errors.New("is a directory")
+	}
+	if offset < 0 || offset > fi.Size() {
+		return "", false, false, 0, errors.New("invalid offset")
 	}
 	f, err := os.Open(target)
 	if err != nil {
-		return "", false, false, err
+		return "", false, false, 0, err
 	}
 	defer f.Close()
-	buf := make([]byte, maxFileRead)
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return "", false, false, 0, err
+	}
+	buf := make([]byte, maxChunk)
 	n, _ := f.Read(buf)
 	buf = buf[:n]
-	truncated := fi.Size() > int64(n)
-	binary := bytes.IndexByte(buf[:min(len(buf), 8192)], 0) >= 0
-	return string(buf), truncated, binary, nil
+	next := offset + int64(n)
+	truncated := next < fi.Size()
+	binary := offset == 0 && bytes.IndexByte(buf[:min(len(buf), 8192)], 0) >= 0
+	return string(buf), truncated, binary, next, nil
 }
 
 func gitRun(root string, args ...string) (string, error) {
@@ -176,7 +188,7 @@ func (s *sessionService) GitDiff(cwd, rel string) (string, bool, error) {
 	if strings.TrimSpace(out) == "" && rel != "" {
 		// 未跟踪文件：把内容作为新增展示
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err == nil {
-			if content, _, binary, err := s.Read(cwd, rel); err == nil && !binary {
+			if content, _, binary, _, err := s.Read(cwd, rel, 0); err == nil && !binary {
 				var b strings.Builder
 				for _, line := range strings.Split(strings.TrimRight(content, "\n"), "\n") {
 					b.WriteString("+" + line + "\n")
@@ -187,8 +199,8 @@ func (s *sessionService) GitDiff(cwd, rel string) (string, bool, error) {
 	}
 	_ = target
 	truncated := false
-	if len(out) > maxFileRead {
-		out = out[:maxFileRead]
+	if len(out) > maxDiff {
+		out = out[:maxDiff]
 		truncated = true
 	}
 	return out, truncated, nil
