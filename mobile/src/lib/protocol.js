@@ -80,7 +80,11 @@ class Link {
       this.push(msg)
     }
     this.onClose = null
+    this.closed = false
     ws.onclose = () => {
+      this.closed = true
+      // 连接已经断了：等待中的请求立刻失败，不要干等超时。
+      for (const w of this.waiters.splice(0)) w.fail(new Error('disconnected'))
       if (this.onClose) this.onClose()
     }
   }
@@ -101,18 +105,24 @@ class Link {
       return
     }
     const w = this.waiters.shift()
-    if (w) w(msg)
+    if (w) w.ok(msg)
     else this.queue.push(msg)
   }
 
   next(timeoutMs = 15000) {
     if (this.queue.length) return Promise.resolve(this.queue.shift())
+    if (this.closed) return Promise.reject(new Error('disconnected'))
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs)
-      this.waiters.push(msg => {
-        clearTimeout(timer)
-        resolve(msg)
-      })
+      const timer = setTimeout(() => {
+        const i = this.waiters.indexOf(w)
+        if (i >= 0) this.waiters.splice(i, 1)
+        reject(new Error('timeout'))
+      }, timeoutMs)
+      const w = {
+        ok: msg => { clearTimeout(timer); resolve(msg) },
+        fail: err => { clearTimeout(timer); reject(err) },
+      }
+      this.waiters.push(w)
     })
   }
 
@@ -186,12 +196,37 @@ export class Session {
     return reply.entries || []
   }
 
+  // 大文件分块读取：每次最多约 4 KiB，直到服务端说没有下一块。
   async fsRead(cwd, path) {
-    const id = Math.random().toString(16).slice(2, 12)
-    this.link.send({ v: 1, type: 'fs.read', id, cwd, path })
-    const reply = await this.link.until(m => (m.type === 'fs.read' && m.id === id) || m.type === 'fs.error', 20000)
-    if (reply.type !== 'fs.read') throw new Error(reply.error || 'fs.read failed')
-    return { text: reply.text || '', truncated: !!reply.truncated, binary: !!reply.binary }
+    const MAX = 512 * 1024
+    let offset = 0
+    let text = ''
+    let truncated = false
+    let binary = false
+    for (;;) {
+      const id = Math.random().toString(16).slice(2, 12)
+      this.link.send({ v: 1, type: 'fs.read', id, cwd, path, offset })
+      const reply = await this.link.until(m => (m.type === 'fs.read' && m.id === id) || m.type === 'fs.error', 20000)
+      if (reply.type !== 'fs.read') throw new Error(reply.error || 'fs.read failed')
+      text += reply.text || ''
+      binary = binary || !!reply.binary
+      if (binary || text.length >= MAX) {
+        truncated = !!reply.truncated || text.length >= MAX
+        break
+      }
+      if (!reply.truncated) {
+        truncated = false
+        break
+      }
+      const next = Number(reply.next || 0)
+      if (next <= offset) {
+        // 旧版主机没有 next：只能拿到第一块。
+        truncated = true
+        break
+      }
+      offset = next
+    }
+    return { text, truncated, binary }
   }
 
   async gitStatus(cwd) {

@@ -36,7 +36,7 @@ log('paired with', session.ready.hostName)
 const projects = await session.projects()
 log('projects', projects.length, projects.slice(0, 3).map(p => `${p.cwd}(${p.sessions})`).join(' '))
 
-const key = await session.startSession(cwd, '')
+const key = await session.startSession('claude', cwd, '', 'readonly')
 log('session key', key.slice(0, 8))
 const events = []
 await session.subscribe(key, 0, ev => {
