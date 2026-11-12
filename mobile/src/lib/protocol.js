@@ -2,6 +2,7 @@
 // 传输是外层 WSS；本版本没有内层端到端加密（见文档）。
 import * as ed from '@noble/ed25519'
 import { sha256, sha512 } from '@noble/hashes/sha2.js'
+import { Opener, Sealer, parseKey } from './e2ee.js'
 
 ed.hashes.sha512 = sha512
 
@@ -56,6 +57,8 @@ class Link {
     this.ws = ws
     this.queue = []
     this.waiters = []
+    this.sealer = null
+    this.opener = null
     ws.binaryType = 'arraybuffer'
     ws.onmessage = ev => {
       const text = typeof ev.data === 'string' ? ev.data : dec.decode(new Uint8Array(ev.data))
@@ -64,6 +67,15 @@ class Link {
         msg = JSON.parse(text)
       } catch {
         return
+      }
+      if (this.opener) {
+        // 加密开启后只接受密文帧；明文一律丢弃（不降级）。
+        if (msg.type !== 'enc' || typeof msg.data !== 'string') return
+        try {
+          msg = JSON.parse(dec.decode(this.opener.open(unb64(msg.data))))
+        } catch {
+          return
+        }
       }
       this.push(msg)
     }
@@ -112,9 +124,21 @@ class Link {
     }
   }
 
+  // 开启内层加密：手机→电脑用 c2h，电脑→手机用 h2c。
+  enableCipher(keyB64) {
+    const key = parseKey(keyB64)
+    this.sealer = new Sealer(key, 'c2h')
+    this.opener = new Opener(key, 'h2c')
+  }
+
   // 应用帧必须是二进制：中转只转发二进制帧。
   send(obj) {
-    this.ws.send(enc.encode(JSON.stringify(obj)))
+    if (!this.sealer) {
+      this.ws.send(enc.encode(JSON.stringify(obj)))
+      return
+    }
+    const sealed = this.sealer.seal(enc.encode(JSON.stringify(obj)))
+    this.ws.send(enc.encode(JSON.stringify({ v: 1, type: 'enc', data: b64(sealed) })))
   }
 
   close() {
@@ -320,6 +344,9 @@ async function connect(link, device, name, invitation, onPending) {
 
 // 首次配对：invitation 来自扫码/粘贴。
 export async function pair(invitation, device, name, onPending) {
+  if (invitation?.v !== 2 || !invitation?.contentKey) {
+    throw new Error('邀请来自旧版本，请在电脑上重新生成')
+  }
   const link = await Link.open(invitation.url)
   link.ws.send(
     JSON.stringify({
@@ -330,15 +357,18 @@ export async function pair(invitation, device, name, onPending) {
     }),
   )
   await link.until(m => m.role === 'paired', 60000)
+  link.enableCipher(invitation.contentKey)
   return connect(link, device, name, invitation, onPending)
 }
 
-// 已配对设备重连：只需要保存的 route/credential。
+// 已配对设备重连：只需要保存的 route/credential 和加密密钥。
 export async function reconnect(saved, device, onPending) {
+  if (!saved?.e2eeKey) throw new Error('需要重新配对（缺少加密密钥）')
   const link = await Link.open(saved.url)
   link.ws.send(
     JSON.stringify({ version: 1, role: 'connect', route: saved.route, credential: saved.credential }),
   )
   await link.until(m => m.role === 'paired', 60000)
+  link.enableCipher(saved.e2eeKey)
   return connect(link, device, saved.name, null, onPending)
 }

@@ -112,6 +112,7 @@ async function doPair(invitation) {
     credential: invitation.credential,
     name: session.ready.hostName || '电脑',
     deviceId: session.ready.deviceId,
+    e2eeKey: invitation.contentKey,
   }
   await secureSet('pairing', JSON.stringify(pairing.value))
   state.value = 'connected'
