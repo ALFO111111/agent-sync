@@ -256,7 +256,7 @@ Options:
 	"用 %s claim <项目ID> <本机路径> 认领，或 %s ignore <项目ID> 忽略": "Claim with %s claim <project-id> <local-path>, or ignore with %s ignore <project-id>",
 
 	// 2026-10：只追加拉取、备份、修改口令、开机自启、会话搜索
-	"本机文件刚被修改":                    "The local file was just modified",
+	"本机文件刚被修改": "The local file was just modified",
 	"%s/%s 正在被修改，本轮先跳过，下次同步再处理":   "%s/%s is being modified; skipped this round, will retry next sync",
 	"找不到这份备份（可能已超过保留期被清理）":        "Backup not found (it may have been cleaned up after the retention period)",
 	"这条记录没有备份文件":                  "This entry has no backup file",
