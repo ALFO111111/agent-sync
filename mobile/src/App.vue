@@ -11,6 +11,7 @@ import {
   reconnect,
 } from './lib/protocol.js'
 import { secureGet, secureRemove, secureSet, storageIsSecure } from './lib/storage.js'
+import { hostKey, pickActive, upsertPairing } from './lib/pairings.js'
 
 const state = ref('idle')
 const message = ref('')
@@ -19,6 +20,7 @@ const invitationText = ref('')
 const echoText = ref('hello')
 const device = ref(null)
 const pairing = ref(null)
+const pairings = ref([])
 const ready = ref(null)
 const devices = ref([])
 const busy = ref(false)
@@ -92,9 +94,42 @@ async function loadOrCreateDevice() {
   log('已生成新的设备身份')
 }
 
-async function loadPairing() {
-  const raw = await secureGet('pairing')
-  pairing.value = raw ? JSON.parse(raw) : null
+const PAIRINGS_KEY = 'pairings'
+const ACTIVE_KEY = 'activeHost'
+
+async function savePairingsStore(list, active) {
+  await secureSet(PAIRINGS_KEY, JSON.stringify(list))
+  await secureSet(ACTIVE_KEY, active ? hostKey(active) : '')
+}
+
+// 读取多台电脑；老版本只有一条 pairing，自动迁移过来。
+async function loadPairings() {
+  const raw = await secureGet(PAIRINGS_KEY)
+  if (raw) {
+    try {
+      const list = JSON.parse(raw)
+      pairings.value = list
+      pairing.value = pickActive(list, (await secureGet(ACTIVE_KEY)) || '')
+      return
+    } catch {
+      // 数据坏了就当没有
+    }
+  }
+  const old = await secureGet('pairing')
+  if (old) {
+    try {
+      const p = JSON.parse(old)
+      pairings.value = [p]
+      pairing.value = p
+      await savePairingsStore(pairings.value, p)
+      await secureRemove('pairing')
+      return
+    } catch {
+      // 忽略
+    }
+  }
+  pairings.value = []
+  pairing.value = null
 }
 
 function onPending(id) {
@@ -109,7 +144,8 @@ async function doPair(invitation) {
   message.value = '正在连接中转…'
   session = await pair(invitation, device.value, deviceName.value, onPending)
   ready.value = session.ready
-  pairing.value = {
+  const entry = {
+    hostId: invitation.hostId || session.ready.hostId || '',
     url: invitation.url,
     route: invitation.route,
     credential: invitation.credential,
@@ -117,7 +153,9 @@ async function doPair(invitation) {
     deviceId: session.ready.deviceId,
     e2eeKey: invitation.contentKey,
   }
-  await secureSet('pairing', JSON.stringify(pairing.value))
+  pairings.value = upsertPairing(pairings.value, entry)
+  pairing.value = entry
+  await savePairingsStore(pairings.value, entry)
   state.value = 'connected'
   message.value = `已连接到 ${pairing.value.name}`
   log('配对成功，已保存设备授权')
@@ -247,26 +285,57 @@ function connectSaved() {
   run(() => doReconnect())
 }
 
-function disconnect() {
-  const finish = () => {
-    if (session && session.link) session.link.onClose = null
-    if (session) session.close()
-    session = null
-    state.value = 'idle'
-    message.value = '已断开'
-    chatOpen.value = false
-    sessionKey.value = ''
-    log('已断开')
-  }
-  // 先尽量结束电脑上的会话，再断开连接。
+// 断开并清掉当前会话（切换电脑、删除电脑、手动断开共用）。
+async function teardown() {
   if (session && sessionKey.value) {
-    session
-      .closeSession(sessionKey.value)
-      .catch(() => {})
-      .finally(finish)
-  } else {
-    finish()
+    try {
+      await session.closeSession(sessionKey.value)
+    } catch {
+      // 连接已断时忽略
+    }
   }
+  if (session && session.link) session.link.onClose = null
+  if (session) session.close()
+  session = null
+  chatOpen.value = false
+  sessionKey.value = ''
+  overview.value = null
+  state.value = 'idle'
+}
+
+function disconnect() {
+  run(async () => {
+    await teardown()
+    message.value = '已断开'
+    log('已断开')
+  })
+}
+
+// 切换到另一台电脑：先断开当前连接，再用保存的凭据重连。
+function switchTo(p) {
+  if (!p) return
+  run(async () => {
+    await teardown()
+    pairing.value = p
+    await savePairingsStore(pairings.value, p)
+    await doReconnect()
+    log(`已切换到 ${p.name}`)
+    tab.value = 'overview'
+  })
+}
+
+function removeComputer(p) {
+  run(async () => {
+    const active = pairing.value && hostKey(pairing.value) === hostKey(p)
+    if (active) await teardown()
+    pairings.value = pairings.value.filter(x => hostKey(x) !== hostKey(p))
+    if (active) {
+      pairing.value = pairings.value[0] || null
+      message.value = pairing.value ? `已删除，当前选择 ${pairing.value.name}，点“连接”` : '已删除全部配对'
+    }
+    await savePairingsStore(pairings.value, pairing.value)
+    log(`已删除电脑 ${p.name}`)
+  })
 }
 
 function sendEcho() {
@@ -282,26 +351,6 @@ function loadDevices() {
     if (!session) throw new Error('还没有连接')
     devices.value = await session.devices()
     log(`设备列表 ${devices.value.length} 条`)
-  })
-}
-
-function forget() {
-  run(async () => {
-    if (session && sessionKey.value) {
-      try {
-        await session.closeSession(sessionKey.value)
-      } catch {
-        // 连接已断时忽略
-      }
-    }
-    if (session && session.link) session.link.onClose = null
-    if (session) session.close()
-    session = null
-    pairing.value = null
-    await secureRemove('pairing')
-    state.value = 'idle'
-    message.value = '已清除配对'
-    log('已清除配对（设备身份仍保留，可重新扫码）')
   })
 }
 
@@ -465,7 +514,11 @@ onMounted(async () => {
   try {
     await initCrypto()
     await loadOrCreateDevice()
-    await loadPairing()
+    await loadPairings()
+    if (pairing.value && !pairing.value.e2eeKey) {
+      log('这台电脑需要重新配对（升级后首次）')
+      pairing.value = null
+    }
     if (!pairing.value) tab.value = 'home' // 还没配对时先停在“连接”页
     log(`设备指纹 ${fingerprint(device.value.publicKey).slice(0, 12)}`)
     if (!secure.value) log('网页调试模式：密钥仅存于浏览器，非正式安全存储')
@@ -718,8 +771,22 @@ function decideApproval(item, allow) {
         <button v-if="!pairing" class="primary" :disabled="busy" @click="$refs.invite.focus()">粘贴邀请</button>
         <button v-if="pairing" class="primary" :disabled="busy" @click="connectSaved">重新连接</button>
         <button v-if="pairing" :disabled="busy" @click="disconnect">断开</button>
-        <button v-if="pairing" class="ghost" :disabled="busy" @click="forget">清除配对</button>
       </div>
+    </section>
+
+    <section v-show="tab === 'home'" v-if="pairings.length" class="card">
+      <h2>电脑（{{ pairings.length }}）</h2>
+      <ul class="devices">
+        <li v-for="p in pairings" :key="hostKey(p)">
+          <span>{{ p.name }}</span>
+          <span v-if="!p.e2eeKey" class="tag">需重新配对</span>
+          <span v-else-if="pairing && hostKey(p) === hostKey(pairing)" class="tag" data-online="true">当前</span>
+          <span class="row-actions">
+            <button v-if="!(pairing && hostKey(p) === hostKey(pairing))" :disabled="busy" @click="switchTo(p)">连接</button>
+            <button class="ghost" :disabled="busy" @click="removeComputer(p)">删除</button>
+          </span>
+        </li>
+      </ul>
     </section>
 
     <section v-if="!pairing" class="card">
@@ -913,7 +980,7 @@ function decideApproval(item, allow) {
         </div>
       </div>
       <dl class="meta">
-        <div><dt>已配对电脑</dt><dd>{{ pairing ? pairing.name : '未配对' }}</dd></div>
+        <div><dt>已配对电脑</dt><dd>{{ pairing ? `${pairing.name}（共 ${pairings.length} 台）` : '未配对' }}</dd></div>
         <div v-if="device"><dt>设备指纹</dt><dd class="mono">{{ fingerprint(device.publicKey).slice(0, 16) }}…</dd></div>
       </dl>
       <h2>电脑</h2>
@@ -927,7 +994,7 @@ function decideApproval(item, allow) {
       <p v-else class="hint">连接电脑后显示电脑信息（只读）</p>
       <div class="actions">
         <button v-if="pairing" @click="disconnect">断开</button>
-        <button v-if="pairing" class="ghost" @click="forget">清除配对</button>
+        <button v-if="pairing" class="ghost" :disabled="busy" @click="removeComputer(pairing)">删除这台电脑</button>
       </div>
       <p class="hint">Agent Sync · 协议 v1 · AI 在所选电脑上执行</p>
     </section>
