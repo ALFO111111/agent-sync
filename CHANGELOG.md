@@ -7,6 +7,27 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-13
+
+### 重要：安卓签名迁移 / Important: Android signing change
+
+- **0.6.1 改用新的长期签名密钥，保持原包名。已安装 0.6.0 的手机必须先卸载旧 App 再安装本版，卸载会清除手机本地私钥和配对信息，需要重新扫码配对。电脑端的会话和文件不受影响。** 此后沿用本版签名密钥的安卓版本可以覆盖升级。
+  **0.6.1 switches to a new long-term signing key with the same application ID. Android users on 0.6.0 must uninstall the old app, install this version and pair again; uninstalling clears the phone's local identity and pairings. Desktop conversations and files are unaffected.** Later Android builds using this key can update in place.
+
+### 新增 / Added
+
+- 手机“设置 → 关于”显示实际 App 版本，支持手动检查、启动及前台恢复后的自动检查、更新提醒和跳过版本；检查不依赖电脑连接，下载通过系统浏览器打开官方 APK，由系统确认安装。
+  Mobile Settings → About shows the installed app version and supports manual/automatic release checks, update reminders and skipped versions. Checks work without a desktop connection; official APK downloads open in the system browser for user-confirmed installation.
+
+### 修复 / Fixed
+
+- Windows/Mac 桌面发行包内含手机遥控主机组件，首次启动自动准备，不再要求单独下载 host；兼容 0.6.0 的软件内更新流程。
+  Windows/Mac desktop packages now include the phone remote host, prepared automatically at startup and delivered through the existing 0.6.0 updater.
+- 显示实际运行的 host 版本和待重启提示，启动等待就绪、停止等待进程退出，避免误报升级成功、重复启动或强行中断现有会话；保留电脑身份和配对信息。
+  Show the running host version and pending restart state, wait for readiness/exit, and avoid false upgrade success, duplicate hosts or forced interruption of existing sessions while preserving desktop identity and pairings.
+- 发布复用完整 CI 门禁，增加跨平台路径测试、内置 host 离线运行自检、安卓签名/源码版本核对及统一校验清单；缺少任一平台产物则不公开发布。
+  Releases reuse full CI checks and add portable path tests, an offline bundled-host probe, Android signature/source validation and unified checksums. Missing platform artifacts block publication.
+
 ## [0.6.0] - 2026-11-12
 
 ### 新增 / Added

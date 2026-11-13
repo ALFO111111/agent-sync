@@ -124,8 +124,11 @@ frontend/src/           Vue 3：api/ 调后端，i18n/ 界面文字，views/ 页
 ### 发布流程（维护者）
 
 1. 在 `CHANGELOG.md` 把 `## [Unreleased]` 改成 `## [0.x.y] - 日期`，在上面再留一个空的 `## [Unreleased]`，提交
-2. `git tag v0.x.y && git push origin v0.x.y`
-3. GitHub Actions 自动测试、构建（Windows：exe + zip；macOS：Apple 芯片 dmg），然后发布到 Releases，`SHA256SUMS.txt` 包含全部文件，说明取自 CHANGELOG 对应的那一节
+2. 用**同一提交**构建签名 Android release APK（`mobile` 下 `npm ci && npm test && npm run build && npx cap sync android`，使用 JDK 21，设置 `AGENT_SYNC_SIGNING_PROPERTIES` 指向仓库外私密 properties 后运行 `gradlew assembleRelease --no-daemon`）。签名 properties 包含 `storeFile/storePassword/keyAlias/keyPassword`，不得提交。0.6.1 起必须沿用新长期密钥，公开指纹记录在 `mobile/android/release-certificate.sha256`。
+3. 先创建 `v0.x.y` 的 **draft Release**，暂存 `agent-sync-0.x.y-android.apk` 和 `android-build.json`（字段：`sourceCommit` 完整提交哈希、`version`、APK 的 `sha256`）。上传完成才运行 `git tag v0.x.y && git push origin v0.x.y`。
+4. GitHub Actions 在 Windows/macOS 上执行与 CI 相同的检查，再通过 `go run ./scripts/build-desktop -platform windows/amd64 -version 0.x.y`（Mac 用 `darwin/arm64`）构建和自检内置 host。Android job 测试前端，并验证 draft APK 的源码哈希、版本、包名、非 debug 和签名指纹；任一项失败不会公开 Release。
+5. 全部通过后统一发布 exe、DMG、APK 和校验过的 `SHA256SUMS.txt`。本地 `打包.bat` 也调用同一构建入口；直接 `wails build` 仅作为不内含 host 的开发构建。不要先公开桌面包再补传 APK。
+6. 0.6.0→0.6.1 安卓发生过签名迁移，须卸载重装并重新配对；从0.6.1开始不要再次换签名密钥。请离线备份 keystore 和密码文件，不能把它们放入发布附件。
 
 ---
 
@@ -251,5 +254,7 @@ frontend/src/           Vue 3: api/ calls the backend, i18n/ UI text, views/ pag
 ### Releasing (maintainers)
 
 1. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [0.x.y] - date`, add a fresh empty `## [Unreleased]` above it, commit
-2. `git tag v0.x.y && git push origin v0.x.y`
-3. GitHub Actions tests, builds (Windows: exe + zip; macOS: Apple silicon dmg) and publishes the release with every file in `SHA256SUMS.txt`, using that CHANGELOG section as the notes
+2. Build a signed Android release APK from the **same commit** using JDK 21 and `AGENT_SYNC_SIGNING_PROPERTIES` pointing to a private external properties file (`storeFile/storePassword/keyAlias/keyPassword`). Reuse the long-term key introduced in 0.6.1; its public fingerprint is in `mobile/android/release-certificate.sha256`. Never commit signing secrets.
+3. Create a **draft Release** for `v0.x.y`, stage `agent-sync-0.x.y-android.apk` and `android-build.json` (`sourceCommit`, `version`, APK `sha256`), then `git tag v0.x.y && git push origin v0.x.y`.
+4. Actions runs shared CI checks, builds and probes self-contained Windows/Mac desktop packages, and validates the staged APK's commit, version, package, non-debug status and signing fingerprint. Only then are exe, DMG, APK and verified checksums published together. Local `打包.bat` uses the same desktop build entry point; plain `wails build` is a development build without the host.
+5. Android 0.6.0 → 0.6.1 requires uninstall/reinstall and re-pairing due to the signing-key migration. Keep using the 0.6.1 key for future updates; back up the keystore and password file offline, never as release assets.

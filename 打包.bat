@@ -51,7 +51,7 @@ if errorlevel 1 (
 )
 
 echo [3/3] 开始打包（前端构建 + Go 编译，约 1 分钟；第一次会自动下载 Go 1.27.2）...
-wails build
+go run ./scripts/build-desktop -platform windows/amd64 %*
 if errorlevel 1 (
     echo.
     echo [失败] 打包没成功，看上方的报错

@@ -1,0 +1,36 @@
+name: Validate desktop
+description: Run the same checks before CI and desktop releases
+runs:
+  using: composite
+  steps:
+    - name: Generate Wails bindings
+      shell: bash
+      run: |
+        go install github.com/wailsapp/wails/v2/cmd/wails@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
+        wails generate module
+
+    - name: Frontend (i18n check + unit tests + build)
+      working-directory: frontend
+      shell: bash
+      run: |
+        npm ci
+        npm run check-i18n
+        npm test
+        npm run build
+
+    - name: gofmt
+      shell: bash
+      run: |
+        unformatted=$("$(go env GOROOT)/bin/gofmt" -l .)
+        if [ -n "$unformatted" ]; then
+          printf '需要 gofmt / not gofmt-ed:\n%s\n' "$unformatted"
+          exit 1
+        fi
+
+    - name: go vet
+      shell: bash
+      run: go vet ./...
+
+    - name: go test
+      shell: bash
+      run: go test ./...

@@ -11,26 +11,37 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/skip2/go-qrcode"
 
 	"github.com/ALFO111111/agent-sync/internal/config"
+	"github.com/ALFO111111/agent-sync/internal/fsutil"
+	"github.com/ALFO111111/agent-sync/internal/hostbundle"
 	"github.com/ALFO111111/agent-sync/internal/i18n"
 )
 
 // RemoteStatus 是手机遥控页展示的状态。
 type RemoteStatus struct {
-	Running  bool            `json:"running"`
-	HostID   string          `json:"hostId,omitempty"`
-	HostName string          `json:"hostName,omitempty"`
-	Relay    string          `json:"relay,omitempty"`
-	Pending  []RemotePending `json:"pending,omitempty"`
-	Devices  []RemoteDevice  `json:"devices,omitempty"`
-	Active   []RemoteActive  `json:"active,omitempty"`
-	Dir      string          `json:"dir"`
-	BinPath  string          `json:"binPath,omitempty"`
+	Running        bool            `json:"running"`
+	Version        string          `json:"version,omitempty"`
+	BuildID        string          `json:"buildID,omitempty"`
+	PID            int             `json:"pid,omitempty"`
+	BundledVersion string          `json:"bundledVersion,omitempty"`
+	BundledBuildID string          `json:"bundledBuildID,omitempty"`
+	NeedsRestart   bool            `json:"needsRestart"`
+	InstallError   string          `json:"installError,omitempty"`
+	HostID         string          `json:"hostId,omitempty"`
+	HostName       string          `json:"hostName,omitempty"`
+	Relay          string          `json:"relay,omitempty"`
+	Pending        []RemotePending `json:"pending,omitempty"`
+	Devices        []RemoteDevice  `json:"devices,omitempty"`
+	Active         []RemoteActive  `json:"active,omitempty"`
+	Dir            string          `json:"dir"`
+	BinPath        string          `json:"binPath,omitempty"`
 }
 
 type RemotePending struct {
@@ -100,6 +111,9 @@ type remoteResponse struct {
 	HostID     string          `json:"hostId,omitempty"`
 	HostName   string          `json:"hostName,omitempty"`
 	Relay      string          `json:"relay,omitempty"`
+	Version    string          `json:"version,omitempty"`
+	BuildID    string          `json:"buildID,omitempty"`
+	PID        int             `json:"pid,omitempty"`
 }
 
 func remoteDial(dir string, req remoteRequest, timeout time.Duration) (remoteResponse, error) {
@@ -142,12 +156,35 @@ func remoteCall(dir, cmd string, timeout time.Duration) (remoteResponse, error) 
 	return resp, nil
 }
 
-// remoteBin 找到主机组件可执行文件：配置 > 主程序同目录 > PATH。
+// remoteBin 查询路径不执行安装；发布版内置组件优先于开发环境的同目录/PATH。
 func remoteBin(cfg *config.Config) string {
 	if cfg.RemoteBin != "" {
 		return cfg.RemoteBin
 	}
+	if hostbundle.Available() {
+		p, _ := hostbundle.Path()
+		return p
+	}
 	return autoRemoteBin()
+}
+
+var remoteLifecycle sync.Mutex
+var remoteStopping = map[string]int{} // 持remoteLifecycle；停止超时后也必须等原PID真正消失。
+var remoteInstall struct {
+	sync.RWMutex
+	err error
+}
+
+// PrepareRemoteHost 只安装内置组件，不启动遥控、不改变配对信息。
+func PrepareRemoteHost() error {
+	var err error
+	if hostbundle.Available() {
+		_, err = hostbundle.Ensure()
+	}
+	remoteInstall.Lock()
+	remoteInstall.err = err
+	remoteInstall.Unlock()
+	return err
 }
 
 // autoRemoteBin 只看主程序同目录和 PATH，不看用户配置。
@@ -170,12 +207,19 @@ func autoRemoteBin() string {
 // GetRemoteStatus 读取手机遥控状态；没运行时返回 Running=false。
 func GetRemoteStatus(cfg *config.Config) RemoteStatus {
 	dir := RemoteDir()
-	st := RemoteStatus{Dir: dir, BinPath: remoteBin(cfg)}
+	st := RemoteStatus{Dir: dir, BinPath: remoteBin(cfg), BundledVersion: hostbundle.Version(), BundledBuildID: hostbundle.BuildID()}
+	remoteInstall.RLock()
+	if remoteInstall.err != nil {
+		st.InstallError = remoteInstall.err.Error()
+	}
+	remoteInstall.RUnlock()
 	resp, err := remoteCall(dir, "status", 5*time.Second)
 	if err != nil {
 		return st
 	}
 	st.Running = true
+	st.Version, st.BuildID, st.PID = resp.Version, resp.BuildID, resp.PID
+	st.NeedsRestart = cfg.RemoteBin == "" && hostbundle.Available() && (resp.Version != st.BundledVersion || resp.BuildID != st.BundledBuildID || resp.PID <= 0)
 	st.HostID = resp.HostID
 	st.HostName = resp.HostName
 	st.Relay = resp.Relay
@@ -203,13 +247,12 @@ func GetRemoteConfig() (*RemoteConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	st := GetRemoteStatus(cfg)
 	return &RemoteConfig{
 		Relay:     DisplayRelayURL(cfg.RemoteRelay),
 		Public:    DisplayRelayURL(cfg.RemotePublic),
 		Name:      cfg.RemoteName,
 		ClaudeBin: cfg.RemoteClaudeBin,
-		Bin:       st.BinPath,
+		Bin:       cfg.RemoteBin,
 		Proxy:     cfg.RemoteProxy,
 	}, nil
 }
@@ -236,32 +279,63 @@ func SaveRemoteConfig(rc RemoteConfig) error {
 	cfg.RemoteName = strings.TrimSpace(rc.Name)
 	cfg.RemoteClaudeBin = strings.TrimSpace(rc.ClaudeBin)
 	cfg.RemoteProxy = strings.TrimSpace(rc.Proxy)
-	// 只在用户填了和自动查找不同的路径时才记下来，避免换机器后指向旧路径。
-	if b := strings.TrimSpace(rc.Bin); b != "" && b != autoRemoteBin() {
-		cfg.RemoteBin = b
-	} else {
-		cfg.RemoteBin = ""
-	}
+	// 空值才代表自动；显式选择的路径应原样保留。
+	cfg.RemoteBin = strings.TrimSpace(rc.Bin)
 	return config.Save(cfg)
 }
 
 // RemoteEnsure 在未运行且已配置中转地址时启动主机组件。
 func RemoteEnsure(cfg *config.Config) error {
-	st := GetRemoteStatus(cfg)
-	if st.Running {
-		return nil
+	remoteLifecycle.Lock()
+	defer remoteLifecycle.Unlock()
+	return remoteEnsureAt(cfg, RemoteDir())
+}
+
+func remoteEnsureAt(cfg *config.Config, dir string) error {
+	if pid := remoteStopping[dir]; pid > 0 {
+		if err := waitRemoteGone(pid, 10*time.Second); err != nil {
+			return err
+		}
+		delete(remoteStopping, dir)
+	}
+	if _, err := remoteCall(dir, "status", 5*time.Second); err == nil {
+		return nil // 旧主机保持运行，不自动中断会话。
 	}
 	if cfg.RemoteRelay == "" || cfg.RemotePublic == "" {
 		return errors.New("remote relay address is not configured")
 	}
-	bin := st.BinPath
+	bin := cfg.RemoteBin
+	if bin == "" && hostbundle.Available() {
+		if err := PrepareRemoteHost(); err != nil {
+			return err
+		}
+		bin, _ = hostbundle.Path()
+	} else if bin == "" {
+		bin = autoRemoteBin()
+	}
 	if bin == "" {
 		return errors.New("agent-sync-host binary not found")
 	}
-	dir := RemoteDir()
+	// 启动前短暂检查生命周期锁；真正的实例互斥由host持锁保证。
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	lock, err := os.OpenFile(filepath.Join(dir, "host.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	locked, err := fsutil.TryLockFile(lock)
+	if err != nil {
+		lock.Close()
+		return err
+	}
+	if !locked {
+		lock.Close()
+		return waitRemoteReady(dir, nil, 10*time.Second, cfg.RemoteBin == "" && hostbundle.Available())
+	}
+	_ = fsutil.UnlockFile(lock)
+	_ = lock.Close()
+	// 拿得到锁说明上次生命周期已结束；崩溃留下的PID可能已复用，不据此永久阻断。
 	logf, err := os.OpenFile(filepath.Join(dir, "host.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
@@ -292,8 +366,42 @@ func RemoteEnsure(cfg *config.Config) error {
 		return err
 	}
 	_ = logf.Close()
-	_ = cmd.Process.Release()
-	return nil
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	return waitRemoteReady(dir, exited, 10*time.Second, cfg.RemoteBin == "" && hostbundle.Available())
+}
+
+func waitRemoteReady(dir string, exited <-chan error, timeout time.Duration, bundled bool) error {
+	check := func() (bool, error) {
+		st, err := remoteCall(dir, "status", time.Second)
+		if err != nil {
+			return false, nil
+		}
+		if bundled && (st.Version != hostbundle.Version() || st.BuildID != hostbundle.BuildID()) {
+			return false, i18n.Err("主机组件版本不匹配，仍未升级，请停止后重启主机；旧版请先重启电脑")
+		}
+		return true, nil
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if ready, err := check(); ready || err != nil {
+			return err
+		}
+		select {
+		case <-deadline.C:
+			return i18n.Err("主机组件启动超时，请查看 host.log；请勿重复启动")
+		case <-exited:
+			// 另一个启动者可能已抢先取得锁；只在控制通道已就绪时算成功。
+			if ready, err := check(); ready || err != nil {
+				return err
+			}
+			return i18n.Err("主机组件启动失败，请查看 host.log")
+		case <-tick.C:
+		}
+	}
 }
 
 // zeroToEmpty 把 Go 的零值时间（0001-01-01）当成“没有”，免得界面显示成七十几万天前。
@@ -309,17 +417,57 @@ func RemoteStart(cfg *config.Config) error { return RemoteEnsure(cfg) }
 
 // RemoteStop 让主机组件退出；没在运行也算成功。
 func RemoteStop() error {
-	resp, err := remoteDial(RemoteDir(), remoteRequest{Cmd: "quit"}, 10*time.Second)
-	if err != nil {
-		if strings.Contains(err.Error(), "not running") {
-			return nil
+	remoteLifecycle.Lock()
+	defer remoteLifecycle.Unlock()
+	return remoteStopAt(RemoteDir(), 15*time.Second)
+}
+
+func remoteStopAt(dir string, timeout time.Duration) error {
+	if pid := remoteStopping[dir]; pid > 0 {
+		if err := waitRemoteGone(pid, timeout); err != nil {
+			return err
 		}
+		delete(remoteStopping, dir)
+	}
+	st, err := remoteCall(dir, "status", 5*time.Second)
+	if err != nil {
+		if raw, readErr := os.ReadFile(filepath.Join(dir, "host.pid")); readErr == nil {
+			pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+			return waitRemoteGone(pid, timeout)
+		} else if !os.IsNotExist(readErr) {
+			return readErr
+		}
+		return nil
+	}
+	if st.PID <= 0 {
+		return i18n.Err("旧版主机组件无法确认完全退出，请先重启电脑，再启动手机遥控")
+	}
+	remoteStopping[dir] = st.PID
+	resp, err := remoteDial(dir, remoteRequest{Cmd: "quit"}, 10*time.Second)
+	if err != nil {
 		return err
 	}
 	if !resp.OK {
 		return errors.New(resp.Error)
 	}
-	return nil
+	return waitRemoteGone(st.PID, timeout)
+}
+
+func waitRemoteGone(pid int, timeout time.Duration) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if pid > 0 && fsutil.ProcessGone(pid) {
+			return nil
+		}
+		select {
+		case <-deadline.C:
+			return i18n.Err("主机组件尚未完全退出，请稍后重试；若仍失败，请重启电脑")
+		case <-tick.C:
+		}
+	}
 }
 
 // RemoteRotateKey 更换共享加密密钥；所有手机需要重新配对。

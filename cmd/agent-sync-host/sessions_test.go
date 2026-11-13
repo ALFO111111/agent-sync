@@ -1,13 +1,33 @@
 package main
 
 import (
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 )
 
-// Windows 上路径不区分大小写；会话索引里的盘符可能是小写，手机也可能发大写。
-// 用例里的路径是 Windows 写法，靠 filepath.Separator 判断是否在目录内，macOS/Linux 上跑不出真实语义。
+func TestCwdAllowedPortable(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "project")
+	s := &sessionService{allowed: []string{root}, allowedTime: time.Now()}
+	cases := []struct {
+		cwd  string
+		want bool
+	}{
+		{root, true},
+		{filepath.Join(root, "child"), true},
+		{root + "2", false},
+		{filepath.Join(root, "..", "other"), false},
+		{filepath.Join("relative", "path"), false},
+	}
+	for _, tc := range cases {
+		if got := s.cwdAllowed(tc.cwd); got != tc.want {
+			t.Errorf("cwdAllowed(%q)=%v, want %v", tc.cwd, got, tc.want)
+		}
+	}
+}
+
+// Windows 路径大小写语义不能在 macOS/Linux 上模拟；保留平台限定。
 func TestCwdAllowedCaseInsensitive(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows path semantics")

@@ -11,6 +11,22 @@ permissions:
   contents: read
 
 jobs:
+  mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Mobile tests and build
+        working-directory: mobile
+        run: |
+          npm ci
+          npm test
+          npm run build
+
   test:
     strategy:
       fail-fast: false
@@ -32,32 +48,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      # frontend/wailsjs（前端调后端的代码）由 Wails 根据 internal/gui/app.go 自动生成，不进仓库；
-      # 前端构建要引用它，所以先生成。发布流程用 wails build，会自动生成，不需要这一步。
-      - name: Generate Wails bindings
+      # 和 Release 共用门禁，确保打标签不能绕过检查。
+      - uses: ./.github/actions/validate
+
+      - name: Build self-contained desktop and check bundled host
         shell: bash
-        run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
-          wails generate module
-
-      - name: Frontend (i18n check + unit tests + build)
-        working-directory: frontend
-        shell: bash
-        run: |
-          npm ci
-          npm run check-i18n
-          npm test
-          npm run build
-
-      - name: gofmt
-        shell: bash
-        run: |
-          # 用 go.mod 指定的那个版本的 gofmt（go env GOROOT 会跟着自动切换的工具链走）
-          unformatted=$("$(go env GOROOT)/bin/gofmt" -l .)
-          if [ -n "$unformatted" ]; then echo "需要 gofmt / not gofmt-ed:"; echo "$unformatted"; exit 1; fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: go test
-        run: go test ./...
+        run: go run ./scripts/build-desktop -platform "${{ runner.os == 'Windows' && 'windows/amd64' || 'darwin/arm64' }}" -version dev

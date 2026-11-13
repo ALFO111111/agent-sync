@@ -1,7 +1,10 @@
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { App as CapApp } from '@capacitor/app'
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
+import AboutUpdates from './components/AboutUpdates.vue'
+import mobilePackage from '../package.json'
+import { createUpdateChecker, isTrustedUpdateUrl } from './lib/update.js'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { BarcodeScanner, BarcodeFormat } from '@capacitor-mlkit/barcode-scanning'
 import { SpeechRecognition } from '@capacitor-community/speech-recognition'
@@ -70,7 +73,7 @@ const chatInputEl = ref(null)
 const overview = ref(null)
 const overviewBusy = ref(false)
 const overviewErr = ref("")
-const theme = ref(localStorage.getItem("ags:theme") || "system")
+const theme = ref((() => { try { return localStorage.getItem('ags:theme') || 'system' } catch { return 'system' } })())
 const msgBox = ref(null)
 const filesOpen = ref(false)
 const fsCwd = ref("")
@@ -99,6 +102,67 @@ const statusLabel = computed(
 const paired = computed(() => !!pairing.value)
 const secure = computed(() => storageIsSecure())
 const nativePlatform = computed(() => Capacitor.isNativePlatform())
+const versionLabel = ref(Capacitor.isNativePlatform() ? '正在读取安装版本…' : `网页调试版 ${mobilePackage.version}`)
+const update = ref({ auto: true, status: 'idle', message: '', release: null })
+const openingUpdate = ref(false)
+const ExternalLinks = registerPlugin('ExternalLinks')
+let updateChecker
+let updateTimer
+let updateForegroundListener
+let updateDisposed = false
+let updateBooting = true
+let updateBackgrounded = false
+
+function checkUpdate() { return updateChecker?.check({ manual: true }) }
+function setAutoUpdate(value) { updateChecker?.setAuto(value) }
+function skipUpdate() { updateChecker?.skip() }
+async function openUpdate(url) {
+  if (!isTrustedUpdateUrl(url)) { notify('更新地址不可信，已拒绝打开'); return }
+  if (openingUpdate.value) return
+  openingUpdate.value = true
+  try {
+    if (Capacitor.isNativePlatform()) await ExternalLinks.open({ url })
+    else window.open(url, '_blank', 'noopener,noreferrer')
+  } catch { notify('无法打开浏览器，请稍后重试') }
+  finally { openingUpdate.value = false }
+}
+
+// 与配对、电脑连接完全独立；版本只信任原生 App.getInfo。
+async function initUpdates() {
+  if (!Capacitor.isNativePlatform()) return
+  let currentVersion = ''
+  try {
+    const info = await CapApp.getInfo()
+    if (updateDisposed) return
+    currentVersion = info.version
+    versionLabel.value = `安装版本 ${info.version}（build ${info.build}）`
+  } catch { versionLabel.value = '无法读取安装版本' }
+  if (updateDisposed) return
+  let storage
+  try { storage = window.localStorage } catch { /* 禁用存储时仍可检查 */ }
+  updateChecker = createUpdateChecker({ currentVersion, storage, onChange: value => { update.value = value } })
+  updateTimer = setTimeout(() => { updateBooting = false; updateChecker?.check() }, 8000)
+  try {
+    const handle = await CapApp.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive) updateBackgrounded = true
+      else if (updateBackgrounded) {
+        updateBackgrounded = false
+        if (!updateBooting) updateChecker?.check()
+      }
+    })
+    if (updateDisposed) await handle.remove()
+    else updateForegroundListener = handle
+  } catch { /* 系统不支持前后台监听不影响手动检查 */ }
+}
+
+onMounted(() => { void initUpdates() })
+onUnmounted(() => {
+  updateDisposed = true
+  clearTimeout(updateTimer)
+  clearTimeout(toastTimer)
+  updateChecker?.dispose()
+  updateForegroundListener?.remove()
+})
 const connected = computed(() => state.value === 'connected' && session)
 
 function log(line) {
@@ -760,7 +824,7 @@ function applyTheme() {
   const el = document.documentElement
   if (theme.value === 'system') delete el.dataset.theme
   else el.dataset.theme = theme.value
-  localStorage.setItem('ags:theme', theme.value)
+  try { localStorage.setItem('ags:theme', theme.value) } catch { /* 存储被禁用时仅本次生效 */ }
 }
 
 function setTheme(next) {
@@ -1077,6 +1141,10 @@ async function toggleVoice() {
         @connect="connectSaved" @switch="switchTo" @remove="removeComputer"
         @pair="submitInvitationText" @scan="scanQR"
       />
+      <AboutUpdates
+        :version-label="versionLabel" :update="update" :native="nativePlatform" :opening="openingUpdate"
+        @check="checkUpdate" @auto="setAutoUpdate" @open="openUpdate" @skip="skipUpdate"
+      />
     </div>
 
     <template v-else>
@@ -1201,11 +1269,10 @@ async function toggleVoice() {
           <div class="setting-row"><span>数据目录</span><b class="mono small">{{ overview.dataDir }}</b></div>
         </div>
 
-        <div class="section-title">关于</div>
-        <div class="card about-card">
-          <div class="about-name">agent-sync</div>
-          <div class="muted small">手机遥控 · 协议 v1 · 内容端到端加密</div>
-        </div>
+        <AboutUpdates
+          :version-label="versionLabel" :update="update" :native="nativePlatform" :opening="openingUpdate"
+          @check="checkUpdate" @auto="setAutoUpdate" @open="openUpdate" @skip="skipUpdate"
+        />
       </section>
 
       <nav v-if="!chatOpen && !filesOpen" class="tabbar">
@@ -1338,7 +1405,25 @@ async function toggleVoice() {
       <div class="scan-tip">对准电脑上的配对二维码</div>
       <button class="scan-cancel" @click="stopScanQR">取消</button>
     </div>
+    <div v-if="connected && (chatOpen || tab !== 'settings') && update.status === 'available'" class="update-overlay">
+      <section class="card update-prompt" role="dialog" aria-modal="true" aria-labelledby="update-title">
+        <h3 id="update-title">发现新版本 v{{ update.release.version }}</h3>
+        <p class="update-notes">{{ update.release.notes || '暂无版本说明' }}</p>
+        <div class="row wrap">
+          <button class="primary" :disabled="openingUpdate" @click="openUpdate(update.release.downloadUrl)">下载 Android 安装包</button>
+          <button class="ghost" @click="skipUpdate">以后再说</button>
+        </div>
+        <p class="hint">将用系统浏览器打开官方 GitHub 下载，不会自动安装。</p>
+      </section>
+    </div>
     <div v-if="toast" class="toast">{{ toast }}</div>
   </main>
 </template>
+
+<style scoped>
+.update-overlay { position: fixed; inset: 0; z-index: 200; background: #0008; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.update-prompt { width: 100%; max-width: 480px; max-height: 80dvh; overflow-y: auto; margin: 0; }
+.update-prompt h3 { margin-top: 0; }
+.update-notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40dvh; overflow-y: auto; font-size: 13px; line-height: 1.65; }
+</style>
 

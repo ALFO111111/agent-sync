@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +18,9 @@ import (
 
 	"github.com/ALFO111111/agent-sync/internal/i18n"
 )
+
+var version = "dev"
+var buildID = "dev"
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -47,6 +51,16 @@ func run(args []string) int {
 	rest := args[1:]
 
 	switch cmd {
+	case "version":
+		if err := json.NewEncoder(os.Stdout).Encode(struct {
+			Version string `json:"version"`
+			BuildID string `json:"buildID"`
+			GOOS    string `json:"goos"`
+			GOARCH  string `json:"goarch"`
+		}{version, buildID, runtime.GOOS, runtime.GOARCH}); err != nil {
+			return 1
+		}
+		return 0
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -118,6 +132,7 @@ func run(args []string) int {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
+	fmt.Fprintln(os.Stderr, "  agent-sync-host version")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host run -relay ws://127.0.0.1:18765/ws -public wss://host/ws [-name NAME] [-state DIR] [-lang zh-CN|en]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host invite|pending|devices|status|quit [-state DIR]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host approve|deny <requestID> [-state DIR]")

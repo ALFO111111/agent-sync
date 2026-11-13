@@ -3,6 +3,11 @@ package i18n
 // en 中文原文 → 英文。新增中文字符串时在这里补一条（i18n_test.go 会检查有没有漏、有没有多）。
 // 按所在包分组，方便找。
 var en = map[string]string{
+	"主机组件版本不匹配，仍未升级，请停止后重启主机；旧版请先重启电脑": "The running host does not match the bundled version and has not been upgraded. Stop and restart it; for a legacy host, restart your computer first",
+	"主机组件尚未完全退出，请稍后重试；若仍失败，请重启电脑":      "The host has not fully exited. Try again later; if it still fails, restart your computer",
+	"主机组件启动超时，请查看 host.log；请勿重复启动":     "Host startup timed out. Check host.log; do not start another instance",
+	"主机组件启动失败，请查看 host.log":            "Host startup failed. Check host.log",
+	"旧版主机组件无法确认完全退出，请先重启电脑，再启动手机遥控":    "This legacy host cannot confirm a complete shutdown. Restart your computer before starting phone remote again",
 	// 通用标点（拼接列表用）
 	"，": ", ",
 	"、": ", ",

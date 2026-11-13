@@ -75,6 +75,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ensuring.Add(1)
 	go func() {
 		defer a.ensuring.Done()
+		_ = service.PrepareRemoteHost() // 安装失败由手机遥控状态展示；不自动启动。
 		if service.LoadStatus().Initialized {
 			service.EnsureAutoSync() // 失败写日志，首页会提示
 			a.startWatcher()

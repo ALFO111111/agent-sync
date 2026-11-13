@@ -42,23 +42,19 @@ jobs:
         shell: bash
         run: |
           v="${GITHUB_REF_NAME#v}"
+          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          # exe / App 属性里的版本号只能是纯数字 x.y.z，去掉 -beta.1 之类的后缀
-          echo "numeric=$(echo "$v" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+).*/\1/')" >> "$GITHUB_OUTPUT"
 
-      - name: Test
-        run: go test ./...
+      - uses: ./.github/actions/validate
 
-      - name: Install Wails CLI (same version as go.mod)
+      - name: Build self-contained desktop and check bundled host
         shell: bash
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
-
-      - name: Build
-        shell: bash
-        run: |
-          # 版本号写进 exe 文件属性（右键 → 属性 → 详细信息）/ App 的 Info.plist
-          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('wails.json'));j.info.productVersion='${{ steps.ver.outputs.numeric }}';fs.writeFileSync('wails.json',JSON.stringify(j,null,2)+'\n')"
-          wails build -clean -trimpath -platform ${{ matrix.platform }} -ldflags "-X main.version=${{ steps.ver.outputs.version }}"
+        env:
+          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+        run: go run ./scripts/build-desktop -platform '${{ matrix.platform }}' -version "$RELEASE_VERSION"
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -81,8 +77,59 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Mobile tests and build
+        working-directory: mobile
+        run: |
+          npm ci
+          npm test
+          npm run build
+      # 私钥不离开维护者电脑。先把同一提交构建的签名 APK 暂存到 draft，全部验证后才公开。
+      - name: Fetch and verify staged signed APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${GITHUB_REF_NAME#v}"
+          mkdir -p dist staged
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "agent-sync-$v-android.apk" --pattern android-build.json --dir staged
+          VERSION="$v" python3 - <<'PY'
+          import hashlib, json, os, pathlib, shutil
+          version = os.environ['VERSION']
+          name = f'agent-sync-{version}-android.apk'
+          apk = pathlib.Path('staged') / name
+          manifest = json.loads(pathlib.Path('staged/android-build.json').read_text())
+          assert manifest['sourceCommit'] == os.environ['GITHUB_SHA'], 'APK source commit does not match tag'
+          assert manifest['version'] == version, 'APK version mismatch'
+          assert hashlib.sha256(apk.read_bytes()).hexdigest() == manifest['sha256'], 'APK checksum mismatch'
+          shutil.copyfile(apk, pathlib.Path('dist') / name)
+          PY
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$tools/apksigner" verify --verbose --print-certs "dist/agent-sync-$v-android.apk" | tee staged/signature.txt
+          expected="$(tr -d '\r\n ' < mobile/android/release-certificate.sha256)"
+          actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' staged/signature.txt | tr -d '\r\n ')"
+          test "$actual" = "$expected"
+          "$tools/aapt" dump badging "dist/agent-sync-$v-android.apk" > staged/badging.txt
+          grep -F "package: name='com.alfo.agentsync'" staged/badging.txt
+          grep -F "versionName='$v'" staged/badging.txt
+          ! grep -q '^application-debuggable' staged/badging.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-Android
+          path: dist/*.apk
+          if-no-files-found: error
+
   release:
-    needs: build
+    needs: [build, android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -98,22 +145,29 @@ jobs:
         run: |
           v="${GITHUB_REF_NAME#v}"
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          test -s dist/agent-sync.exe
+          test -s "dist/agent-sync-$v-macos-arm64.dmg"
+          test -s "dist/agent-sync-$v-android.apk"
           (cd dist && sha256sum * > ../SHA256SUMS.txt) && mv SHA256SUMS.txt dist/
-          cat dist/SHA256SUMS.txt
+          (cd dist && sha256sum -c SHA256SUMS.txt)
           # 取 CHANGELOG.md 里 "## [版本号]" 到下一个 "## [" 之间的内容
           awk -v ver="$v" '
             index($0, "## [" ver "]") == 1 { on = 1; next }
             on && /^## \[/ { exit }
             on { print }
           ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md || { echo "Missing CHANGELOG section for $v" >&2; exit 1; }
           echo "--- release notes ---"; cat release-notes.md
 
       - uses: softprops/action-gh-release@v3
         with:
+          draft: false
+          fail_on_unmatched_files: true
           body_path: release-notes.md
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/agent-sync.exe
             dist/agent-sync-${{ steps.ver.outputs.version }}-macos-arm64.dmg
+            dist/agent-sync-${{ steps.ver.outputs.version }}-android.apk
             dist/SHA256SUMS.txt

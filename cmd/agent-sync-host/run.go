@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/ALFO111111/agent-sync/internal/fsutil"
 	"github.com/ALFO111111/agent-sync/internal/i18n"
 	"github.com/ALFO111111/agent-sync/internal/remotev1"
 )
@@ -28,7 +30,33 @@ func (d *daemon) stop() {
 }
 
 // runDaemon 常驻：加载身份 → 登记中转 → 处理连接；断开自动退避重连。
-func runDaemon(ctx context.Context, dir, dialURL, publicURL, hostName, claudeBin string) error {
+func runDaemon(ctx context.Context, dir, dialURL, publicURL, hostName, claudeBin string) (result error) {
+	// 身份文件读取之前锁住整个生命周期，清理完成后才释放。
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(filepath.Join(dir, "host.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	locked, err := fsutil.TryLockFile(lock)
+	if err != nil {
+		return err
+	}
+	if !locked {
+		return errors.New("remote host is already starting or running")
+	}
+	defer fsutil.UnlockFile(lock)
+	// 旧版没有生命周期锁；控制通道仍可用时也不能启动第二份。
+	if resp, err := sendControl(dir, ctlRequest{Cmd: "status"}); err == nil && resp.OK {
+		return errors.New("remote host is already running")
+	}
+	pidPath := filepath.Join(dir, "host.pid")
+	if err := writeFileAtomic(pidPath, []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(pidPath)
 	store, err := newFileStore(dir)
 	if err != nil {
 		return err
@@ -65,7 +93,17 @@ func runDaemon(ctx context.Context, dir, dialURL, publicURL, hostName, claudeBin
 	d := &daemon{auth: auth, host: host, hostName: hostName, relayURL: publicURL, controlToken: remotev1.RandomToken(16), sessions: svc, cancel: cancel}
 
 	controlErr := make(chan error, 1)
-	go func() { controlErr <- serveControl(ctx, dir, d) }()
+	go func() {
+		err := serveControl(ctx, dir, d)
+		controlErr <- err
+		cancel()
+	}()
+	defer func() {
+		cancel()
+		if err := <-controlErr; err != nil {
+			result = err
+		}
+	}()
 
 	backoff := time.Second
 	for ctx.Err() == nil {
@@ -90,12 +128,5 @@ func runDaemon(ctx context.Context, dir, dialURL, publicURL, hostName, claudeBin
 		}
 	}
 	fmt.Fprintln(os.Stderr, i18n.T("主机守护已停止"))
-	select {
-	case err := <-controlErr:
-		if err != nil && ctx.Err() == nil {
-			return err
-		}
-	default:
-	}
 	return nil
 }

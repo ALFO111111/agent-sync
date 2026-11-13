@@ -9,19 +9,26 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/ALFO111111/agent-sync/internal/cli"
 	"github.com/ALFO111111/agent-sync/internal/gui"
+	"github.com/ALFO111111/agent-sync/internal/hostbundle"
 	"github.com/ALFO111111/agent-sync/internal/i18n"
 	"github.com/ALFO111111/agent-sync/internal/update"
 )
 
 // version 发布时可用 -ldflags "-X main.version=x.y.z" 覆盖。
 var version = "dev"
+var buildID = "dev"
 
 // 前端构建产物嵌进 exe，单文件分发（托盘图标运行时现画，见 internal/icon）。
 // go:embed 只能引用本包目录及以下的文件，所以放在根目录的 main 包里。
@@ -30,6 +37,17 @@ var version = "dev"
 var frontendDist embed.FS
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--check-host-bundle" {
+		if len(os.Args) != 3 {
+			fmt.Fprintln(os.Stderr, "usage: --check-host-bundle <isolated-cache-directory>")
+			os.Exit(2)
+		}
+		if err := checkHostBundle(os.Args[2]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	// 老版本 macOS 从访达打开 App 时会带一个 -psn_0_xxx 参数，当成没带参数
 	if len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "-psn_") {
 		os.Args = os.Args[:1]
@@ -47,4 +65,33 @@ func main() {
 		return
 	}
 	os.Exit(cli.Run(os.Args[1:], version))
+}
+
+// checkHostBundle 只提取、校验并执行 version，不进入 GUI，不连接任何服务。
+func checkHostBundle(dir string) error {
+	info, err := hostbundle.Metadata()
+	if err != nil {
+		return err
+	}
+	if info.Version != version || info.BuildID != buildID {
+		return fmt.Errorf("desktop version/buildID %q/%q differs from host %q/%q", version, buildID, info.Version, info.BuildID)
+	}
+	path, err := hostbundle.EnsureAt(dir)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "version").Output()
+	if err != nil {
+		return fmt.Errorf("host version: %w", err)
+	}
+	var actual hostbundle.Info
+	if err := json.Unmarshal(out, &actual); err != nil {
+		return fmt.Errorf("host version JSON: %w", err)
+	}
+	if actual.Version != info.Version || actual.BuildID != info.BuildID || actual.GOOS != info.GOOS || actual.GOARCH != info.GOARCH {
+		return fmt.Errorf("host version metadata differs: %s", out)
+	}
+	return json.NewEncoder(os.Stdout).Encode(info)
 }

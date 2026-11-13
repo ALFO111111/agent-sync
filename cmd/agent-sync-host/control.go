@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ALFO111111/agent-sync/internal/remotev1"
@@ -43,6 +44,9 @@ type ctlResponse struct {
 	HostID     string                `json:"hostId,omitempty"`
 	HostName   string                `json:"hostName,omitempty"`
 	Relay      string                `json:"relay,omitempty"`
+	Version    string                `json:"version,omitempty"`
+	BuildID    string                `json:"buildID,omitempty"`
+	PID        int                   `json:"pid,omitempty"`
 }
 
 func controlFile(dir string) string { return filepath.Join(dir, "control") }
@@ -58,10 +62,18 @@ func serveControl(ctx context.Context, dir string, app *daemon) error {
 		ln.Close()
 		return err
 	}
+	closed := make(chan struct{})
+	defer close(closed)
+	defer os.Remove(controlFile(dir))
+	defer ln.Close()
+	var handlers sync.WaitGroup
+	defer handlers.Wait()
 	go func() {
-		<-ctx.Done()
-		ln.Close()
-		os.Remove(controlFile(dir))
+		select {
+		case <-ctx.Done():
+			ln.Close()
+		case <-closed:
+		}
 	}()
 	for {
 		c, err := ln.Accept()
@@ -71,7 +83,11 @@ func serveControl(ctx context.Context, dir string, app *daemon) error {
 			}
 			return err
 		}
-		go handleControlConn(c, app)
+		handlers.Add(1)
+		go func() {
+			defer handlers.Done()
+			handleControlConn(c, app)
+		}()
 	}
 }
 
@@ -166,7 +182,7 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 		return ctlResponse{OK: true}
 	case "status":
 		st := d.auth.State()
-		return ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Relay: d.relayURL}
+		return ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Relay: d.relayURL, Version: version, BuildID: buildID, PID: os.Getpid()}
 	case "rotate-key":
 		if err := d.host.RotateContentKey(); err != nil {
 			return ctlResponse{Error: err.Error()}

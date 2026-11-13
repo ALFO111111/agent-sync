@@ -13,6 +13,9 @@
       </div>
       <div class="muted small">{{ t('remote.subtitle') }}</div>
       <div class="muted small mt">{{ t('remote.encryptedHint') }}</div>
+      <div v-if="st.installError" class="err-box mt">{{ t('remote.installFailed', { error: st.installError }) }}</div>
+      <div v-if="st.needsRestart" class="warn-box mt">{{ t('remote.needsRestart') }}</div>
+      <div v-if="st.running" class="muted small mt">{{ t('remote.runningVersion', { version: st.version || t('remote.legacyVersion'), build: st.buildID || '—' }) }}</div>
 
       <template v-if="!editing">
         <div v-if="st.running" class="info-grid">
@@ -262,7 +265,6 @@ async function start() {
     await api.SaveRemoteConfig(form.value)
     loaded = JSON.stringify(form.value)
     await api.StartRemote()
-    await new Promise((r) => setTimeout(r, 600))
     await refresh()
     ok(t('remote.started'))
   } catch (e) {
@@ -377,9 +379,7 @@ async function saveConfig() {
     saved.value = true
     if (restart) {
       await api.StopRemote()
-      await new Promise((r) => setTimeout(r, 800))
       await api.StartRemote()
-      await new Promise((r) => setTimeout(r, 600))
       await refresh()
     }
     await loadConfig()
