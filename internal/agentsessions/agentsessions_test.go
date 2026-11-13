@@ -104,6 +104,11 @@ func TestManagerFakeProcess(t *testing.T) {
 	body := `#!/bin/sh
 echo '{"type":"system","subtype":"init","session_id":"fake-session"}'
 while IFS= read -r line; do
+  # The manager sends an initialize control request before the user's message.
+  case "$line" in
+    *'"type":"user"'*) ;;
+    *) continue ;;
+  esac
   echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}}'
   echo '{"type":"result","subtype":"success","result":"done","session_id":"fake-session"}'
   break
