@@ -38,7 +38,7 @@ test -L "$mount/Applications"
 ditto "$packaged" "$probe/agent-sync.app"
 exe="$probe/agent-sync.app/Contents/MacOS/agent-sync"
 test -x "$exe"
-lipo -verify_arch arm64 "$exe"
+lipo "$exe" -verify_arch arm64
 mkdir "$probe/state"
 # macOS /var 是系统别名，离线自检的数据目录必须使用真实路径。
 probe="$(cd "$probe" && pwd -P)"
