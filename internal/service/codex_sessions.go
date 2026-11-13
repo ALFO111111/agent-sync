@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ALFO111111/agent-sync/internal/agentsessions/codexhistory"
 	"github.com/ALFO111111/agent-sync/internal/config"
 	"github.com/ALFO111111/agent-sync/internal/engine"
 	"github.com/ALFO111111/agent-sync/internal/i18n"
@@ -169,23 +170,8 @@ func (codexSessions) parse(data []byte) []SessionMessage { return parseCodexSess
 func parseCodexSession(data []byte) []SessionMessage {
 	out := []SessionMessage{}
 	for _, l := range engine.SplitLines(data) {
-		var v struct {
-			Timestamp string `json:"timestamp"`
-			Type      string `json:"type"`
-			Payload   struct {
-				Type      string `json:"type"`
-				Role      string `json:"role"`
-				Message   string `json:"message"`
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-				Input     string `json:"input"`
-				Content   []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"payload"`
-		}
-		if json.Unmarshal(l, &v) != nil {
+		v, err := codexhistory.Parse(l)
+		if err != nil {
 			continue
 		}
 		var tm string
@@ -193,21 +179,10 @@ func parseCodexSession(data []byte) []SessionMessage {
 			tm = t.Local().Format("01-02 15:04:05")
 		}
 		p := v.Payload
+		role, text := v.Conversation()
 		switch {
-		case v.Type == "event_msg" && p.Type == "user_message":
-			if text := codexUserText(p.Message); text != "" {
-				out = append(out, SessionMessage{Role: "user", Time: tm, Text: text})
-			}
-		case v.Type == "response_item" && p.Type == "message" && p.Role == "assistant":
-			var texts []string
-			for _, c := range p.Content {
-				if c.Text != "" {
-					texts = append(texts, c.Text)
-				}
-			}
-			if len(texts) > 0 {
-				out = append(out, SessionMessage{Role: "assistant", Time: tm, Text: strings.Join(texts, "\n")})
-			}
+		case role != "" && text != "":
+			out = append(out, SessionMessage{Role: role, Time: tm, Text: text})
 		case v.Type == "response_item" && (p.Type == "function_call" || p.Type == "custom_tool_call"):
 			brief := toolBrief(json.RawMessage(p.Arguments))
 			if brief == "" && p.Input != "" {
@@ -227,11 +202,7 @@ func parseCodexSession(data []byte) []SessionMessage {
 
 // codexUserText VS Code 插件发的消息是"# Context from my IDE setup: …… ## My request for Codex:\n<真正的输入>"，只留真正的输入。
 func codexUserText(s string) string {
-	const marker = "## My request for Codex:"
-	if i := strings.LastIndex(s, marker); i >= 0 {
-		s = s[i+len(marker):]
-	}
-	return strings.TrimSpace(s)
+	return codexhistory.UserText(s)
 }
 
 func (codexSessions) resume(cfg *config.Config, f sessionFile) (string, []string, error) {

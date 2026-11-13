@@ -7,7 +7,6 @@ import mobilePackage from '../package.json'
 import { createUpdateChecker, isTrustedUpdateUrl } from './lib/update.js'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { BarcodeScanner, BarcodeFormat } from '@capacitor-mlkit/barcode-scanning'
-import { SpeechRecognition } from '@capacitor-community/speech-recognition'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import Icon from './components/Icon.vue'
@@ -47,6 +46,14 @@ const currentProject = ref(null)
 const chatOpen = ref(false)
 const sessionKey = ref('')
 const chat = ref([])
+const historyMessages = ref([])
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyCursor = ref('')
+const historyMore = ref(false)
+let historyTarget = null
+let historyGeneration = 0
+const displayedChat = computed(() => [...historyMessages.value, ...chat.value])
 const chatInput = ref('')
 const fileInput = ref(null)
 const attachments = ref([]) // {attachId,name,size,kind}
@@ -66,7 +73,6 @@ const currentSession = ref(null)
 const generating = ref(false)
 const showPerm = ref(false)
 const showPlus = ref(false)
-const voiceOn = ref(false)
 const scanning = ref(false)
 const projectsLoading = ref(false)
 const chatInputEl = ref(null)
@@ -313,6 +319,7 @@ async function autoReconnect() {
       state.value = 'reconnecting'
       try {
         session = await reconnect(pairing.value, device.value, onPending)
+        ready.value = session.ready
         attachClose()
         state.value = 'connected'
         message.value = `已重新连接 ${pairing.value.name}`
@@ -334,6 +341,10 @@ async function autoReconnect() {
           } catch {
             // 接回失败时保持已连接状态即可
           }
+        }
+        if (chatOpen.value && historyTarget && !historyMessages.value.length) {
+          historyLoading.value = false
+          void loadHistory()
         }
         return
       } catch {
@@ -366,6 +377,11 @@ async function run(action) {
   }
 }
 
+function submitInvitationText(text) {
+  invitationText.value = text
+  submitInvitation()
+}
+
 function submitInvitation() {
   run(async () => {
     let invitation
@@ -385,6 +401,7 @@ function connectSaved() {
 
 // 断开并清掉当前会话（切换电脑、删除电脑、手动断开共用）。
 async function teardown() {
+  resetHistory()
   if (session && sessionKey.value) {
     try {
       await session.closeSession(sessionKey.value)
@@ -495,6 +512,41 @@ function backToProjects() {
   currentSession.value = null
 }
 
+function resetHistory() {
+  historyGeneration++
+  historyTarget = null
+  historyMessages.value = []
+  historyLoading.value = false
+  historyError.value = ''
+  historyCursor.value = ''
+  historyMore.value = false
+}
+
+async function loadHistory(older = false) {
+  if (!historyTarget || !session || historyLoading.value) return
+  const generation = historyGeneration
+  const target = historyTarget
+  const linkSession = session
+  const beforeHeight = msgBox.value?.scrollHeight || 0
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const page = await linkSession.historyPage(target.tool, target.cwd, target.id, older ? historyCursor.value : '')
+    if (generation !== historyGeneration || linkSession !== session) return
+    historyMessages.value = older ? [...page.messages, ...historyMessages.value] : page.messages
+    historyCursor.value = page.cursor
+    historyMore.value = page.hasMore
+    if (older) {
+      await nextTick()
+      if (msgBox.value) msgBox.value.scrollTop += msgBox.value.scrollHeight - beforeHeight
+    } else scrollChat()
+  } catch (err) {
+    if (generation === historyGeneration && linkSession === session) historyError.value = err.message || String(err)
+  } finally {
+    if (generation === historyGeneration) historyLoading.value = false
+  }
+}
+
 async function startChat(cwd, resumeId) {
   // 开新会话前先结束上一个，避免占用电脑上的会话名额。
   if (session && sessionKey.value) {
@@ -504,6 +556,7 @@ async function startChat(cwd, resumeId) {
       // 旧会话可能已结束
     }
   }
+  resetHistory()
   const key = await session.startSession(tool.value, cwd, resumeId || '', mode.value)
   lastSeq = 0
   claudeSessionId = ''
@@ -514,14 +567,8 @@ async function startChat(cwd, resumeId) {
   chatOpen.value = true
   await session.subscribe(key, 0, onSessionEvent)
   if (resumeId) {
-    try {
-      const msgs = await session.history(tool.value, cwd, resumeId)
-      chat.value = msgs.map(m => ({ role: m.role, text: m.text }))
-      if (!msgs.length) chat.value.push({ role: 'notice', text: '这段会话没有可显示的历史' })
-    } catch (err) {
-      chat.value.push({ role: 'notice', text: '历史加载失败：' + (err.message || err) })
-    }
-    scrollChat()
+    historyTarget = { tool: tool.value, cwd, id: resumeId }
+    void loadHistory()
   }
 }
 
@@ -543,6 +590,7 @@ function resumeSession(s) {
 }
 
 function onSessionEvent(ev) {
+  if (ev.seq && ev.seq <= lastSeq) return
   handleSessionEvent(ev)
   scrollChat()
 }
@@ -706,6 +754,7 @@ function stopChat() {
 
 // 返回 = 离开会话并结束电脑上的进程（对话历史仍保留，可再“继续”）。
 function closeChat() {
+  resetHistory()
   run(async () => {
     if (session && sessionKey.value) {
       try {
@@ -758,7 +807,6 @@ onMounted(async () => {
         if (scanning.value) { stopScanQR(); return }
         if (showPlus.value) { showPlus.value = false; return }
         if (showPerm.value) { showPerm.value = false; return }
-        if (voiceOn.value) { toggleVoice(); return }
         if (filesOpen.value) { closeFiles(); return }
         if (chatOpen.value) { closeChat(); return }
         if (tab.value === 'sessions' && sessionView.value === 'project') { backToProjects(); return }
@@ -780,20 +828,24 @@ onMounted(async () => {
 })
 
 // ---- 权限模式 ----
-const modeLabels = {
+const modeLabels = computed(() => tool.value === 'codex' ? {
+  dontAsk: '只读沙箱',
+  acceptEdits: '项目内可写',
+  bypassPermissions: '完全访问',
+} : {
   dontAsk: '只读',
   default: '手动',
   acceptEdits: '自动编辑',
   plan: '计划',
   auto: '自动',
   bypassPermissions: '完全',
-}
+})
 
 // 用按钮组而不是原生 select：部分 Android WebView 的原生下拉只改值、不派发 change。
 async function switchMode(next) {
   if (!session || next === mode.value) return
-  log(`切换权限：${modeLabels[next] || next}`)
-  if (next === 'bypassPermissions' && !window.confirm('完全模式允许 Claude 执行任意命令、修改任意文件。确定切换？')) {
+  log(`切换权限：${modeLabels.value[next] || next}`)
+  if (next === 'bypassPermissions' && !window.confirm(`完全模式允许 ${toolLabels[tool.value]} 执行任意命令、修改任意文件。确定切换？`)) {
     return
   }
   if (busy.value) return
@@ -808,10 +860,10 @@ async function switchMode(next) {
     }
     chat.value.push({
       role: 'notice',
-      text: `权限模式：${modeLabels[next]}${moved ? '（会话已重启，上下文保留）' : ''}`,
+      text: `权限模式：${modeLabels.value[next]}${moved ? '（会话已重启，上下文保留）' : ''}`,
     })
     mode.value = next
-    log('权限模式切换为 ' + modeLabels[next])
+    log('权限模式切换为 ' + modeLabels.value[next])
   } catch (err) {
     message.value = '切换模式失败：' + (err.message || err)
     log(message.value)
@@ -927,6 +979,9 @@ async function scrollChat() {
 function pickTool(next) {
   if (next === tool.value) return
   tool.value = next
+  // 不把 Claude 的“手动审批”等模式误当成 Codex 已支持的交互权限。
+  mode.value = 'dontAsk'
+  resetHistory()
   projects.value = []
   sessions.value = []
   currentProject.value = null
@@ -1099,36 +1154,6 @@ async function pickGallery() {
   await cameraPick(CameraSource.Photos)
 }
 
-async function toggleVoice() {
-  try {
-    if (voiceOn.value) {
-      await SpeechRecognition.stop()
-      voiceOn.value = false
-      return
-    }
-    const { available } = await SpeechRecognition.available()
-    if (!available) { notify('这台手机的语音识别不可用'); return }
-    const perm = await SpeechRecognition.requestPermissions()
-    if (perm.speechRecognition !== 'granted') { notify('没有麦克风权限'); return }
-    SpeechRecognition.removeAllListeners?.()
-    SpeechRecognition.addListener('partialResults', (data) => {
-      const text = data?.matches?.[0]
-      if (text) {
-        chatInput.value = text
-        growInput()
-      }
-    })
-    SpeechRecognition.addListener('listeningState', (data) => {
-      if (data?.status === 'stopped') voiceOn.value = false
-    })
-    await SpeechRecognition.start({ language: 'zh-CN', partialResults: true, popup: false })
-    voiceOn.value = true
-  } catch (err) {
-    voiceOn.value = false
-    notify('语音识别失败：' + (err.message || err))
-  }
-}
-
 </script>
 
 <template>
@@ -1297,13 +1322,19 @@ async function toggleVoice() {
         <span v-if="!connected" class="chat-offline">连接已断开</span>
       </div>
       <div v-if="showPerm" class="perm-sheet">
+        <p v-if="tool === 'codex'" class="small muted">Codex 使用沙箱限制操作，不提供逐操作审批。项目内可写允许修改项目文件；完全访问取消沙箱限制。</p>
         <button v-for="(label, key) in modeLabels" :key="key" :class="{ on: mode === key }" @click="switchMode(key); showPerm = false">
           {{ label }}
         </button>
       </div>
 
       <div ref="msgBox" class="messages">
-        <template v-for="(m, i) in chat" :key="i">
+        <div class="history-actions">
+          <span v-if="historyLoading">正在加载历史…</span>
+          <template v-else-if="historyError"><span>{{ historyError }}</span><button class="sm" :disabled="!connected" @click="loadHistory()">重试</button></template>
+          <button v-else-if="historyMore" class="sm" :disabled="!connected" @click="loadHistory(true)">加载更早的消息</button>
+        </div>
+        <template v-for="(m, i) in displayedChat" :key="i">
           <div v-if="m.role === 'user'" class="msg user">
             <div class="bubble">
               <div v-if="m.text" class="bubble-text">{{ m.text }}</div>
@@ -1327,7 +1358,7 @@ async function toggleVoice() {
           </div>
           <div v-else class="notice">{{ m.text }}</div>
         </template>
-        <p v-if="!chat.length" class="empty chat-empty">问点什么，或者点左下角的 + 发送图片和文件。</p>
+        <p v-if="!displayedChat.length && !historyLoading && !historyError" class="empty chat-empty">问点什么，或者点左下角的 + 发送图片和文件。</p>
       </div>
 
       <div class="composer-wrap">
@@ -1350,7 +1381,6 @@ async function toggleVoice() {
             ref="chatInputEl" v-model="chatInput" rows="1" placeholder="发消息…"
             @keydown.enter.exact.prevent="sendChat" @input="growInput"
           ></textarea>
-          <button class="round-btn mic" :class="{ on: voiceOn }" :disabled="!connected" @click="toggleVoice"><Icon name="mic" /></button>
           <button v-if="generating" class="round-btn stop" @click="stopChat"><Icon name="stop" /></button>
           <button v-else class="round-btn send" :disabled="!connected || attachBusy || (!chatInput.trim() && !attachments.length)" @click="sendChat">
             <Icon name="send" />
@@ -1421,6 +1451,7 @@ async function toggleVoice() {
 </template>
 
 <style scoped>
+.history-actions { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; overflow-wrap: anywhere; }
 .update-overlay { position: fixed; inset: 0; z-index: 200; background: #0008; display: flex; align-items: center; justify-content: center; padding: 16px; }
 .update-prompt { width: 100%; max-width: 480px; max-height: 80dvh; overflow-y: auto; margin: 0; }
 .update-prompt h3 { margin-top: 0; }

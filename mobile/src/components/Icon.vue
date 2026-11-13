@@ -27,7 +27,6 @@ const PATHS = {
   folder: ['M3 6h6l2 2h10v11H3z'],
   camera: ['M4 8h3l2-3h6l2 3h3v11H4z'],
   plus: ['M12 5v14', 'M5 12h14'],
-  mic: ['M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z', 'M5 11a7 7 0 0 0 14 0', 'M12 18v3'],
   send: ['M12 19V5', 'M6 11l6-6 6 6'],
   stop: ['M8 8h8v8H8z'],
   x: ['M6 6l12 12', 'M18 6L6 18'],

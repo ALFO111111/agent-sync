@@ -142,6 +142,19 @@ func (m *CodexManager) reapLoop() {
 	}
 }
 
+// Exec-level sandbox flags precede resume, whose own CLI has no -s option.
+func codexExecArgs(cwd, threadID, mode, text string) []string {
+	args := []string{"exec", "-C", cwd, "-s", codexSandbox(mode)}
+	if threadID != "" {
+		args = append(args, "resume")
+	}
+	args = append(args, "--skip-git-repo-check", "--json")
+	if threadID != "" {
+		args = append(args, threadID)
+	}
+	return append(args, "--", text)
+}
+
 // Send 启动一轮 codex exec（必要时 resume）。
 func (r *CodexRunner) Send(text string) error {
 	r.mu.Lock()
@@ -156,14 +169,10 @@ func (r *CodexRunner) Send(text string) error {
 	r.busy = true
 	r.lastActive = time.Now()
 	threadID := r.threadID
+	mode := r.mode
 	r.mu.Unlock()
 
-	args := []string{"exec"}
-	if threadID != "" {
-		args = append(args, "resume", "--skip-git-repo-check", "--json", threadID, text)
-	} else {
-		args = append(args, "--json", "--skip-git-repo-check", "-C", r.cwd, "-s", codexSandbox(r.mode), text)
-	}
+	args := codexExecArgs(r.cwd, threadID, mode, text)
 	bin := r.config.Bin
 	if bin == "" {
 		if p, err := exec.LookPath("codex"); err == nil {

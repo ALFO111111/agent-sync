@@ -77,7 +77,13 @@ type Envelope struct {
 	Attachments []string `json:"attachments,omitempty"`
 
 	// 历史对话（打开老会话时）
-	Messages []HistoryMessage `json:"messages,omitempty"`
+	Messages   []HistoryMessage `json:"messages,omitempty"`
+	Cursor     string           `json:"cursor,omitempty"`
+	Snapshot   string           `json:"snapshot,omitempty"`
+	Limit      int              `json:"limit,omitempty"`
+	ChunkIndex int              `json:"chunkIndex"`
+	Done       bool             `json:"done,omitempty"`
+	HasMore    bool             `json:"hasMore,omitempty"`
 
 	// 电脑概况（首页/设置，只读）
 	Overview *HostOverview `json:"overview,omitempty"`

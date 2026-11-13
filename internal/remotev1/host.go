@@ -263,6 +263,13 @@ func (h *Host) handle(parent context.Context, ws *websocket.Conn) {
 	}()
 	h.Logf(i18n.T("设备已连接：%s（%s）"), device.Name, shortFingerprint(device.Fingerprint))
 
+	var history historyPager
+	historyPaged := false
+	for _, feature := range hello.Features {
+		if feature == HistoryPagedFeature {
+			historyPaged = true
+		}
+	}
 	subs := 0
 	idle := time.NewTimer(idleLimit)
 	defer idle.Stop()
@@ -393,15 +400,25 @@ func (h *Host) handle(parent context.Context, ws *websocket.Conn) {
 				if h.Sessions == nil {
 					continue
 				}
-				msgs, err := h.Sessions.History(env.Tool, env.Cwd, env.ClaudeSessionID)
-				if err != nil {
-					if s.write(Envelope{Type: "session.error", ID: env.ID, Error: err.Error()}) != nil {
+				load := func() ([]HistoryMessage, error) { return h.Sessions.History(env.Tool, env.Cwd, env.ClaudeSessionID) }
+				if historyPaged {
+					chunks, err := history.page(env, load)
+					if err != nil {
+						if s.write(legacyHistory(env, nil, err)) != nil {
+							return
+						}
+						continue
+					}
+					for _, chunk := range chunks {
+						if s.write(chunk) != nil {
+							return
+						}
+					}
+				} else {
+					msgs, err := load()
+					if s.write(legacyHistory(env, msgs, err)) != nil {
 						return
 					}
-					continue
-				}
-				if s.write(Envelope{Type: "session.history", ID: env.ID, Messages: msgs}) != nil {
-					return
 				}
 			case "session.active":
 				if h.Sessions == nil {
@@ -674,7 +691,7 @@ func (h *Host) closeConnsFor(pub string) {
 func (h *Host) readyEnvelope(deviceID string) Envelope {
 	env := Envelope{Type: "ready", DeviceID: deviceID, HostID: h.Authority.State().HostID, HostName: h.Name}
 	if h.Sessions != nil {
-		env.Features = []string{"sessions"}
+		env.Features = []string{"sessions", HistoryPagedFeature}
 	}
 	return env
 }

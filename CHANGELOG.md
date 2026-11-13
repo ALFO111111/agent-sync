@@ -7,6 +7,27 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-13
+
+### 修复 / Fixed
+
+- 手机历史使用分页与加密分块传输，避免长会话超过单帧限制后断线；支持加载更早消息，历史与实时回复独立展示，失败可重试。
+  Mobile history is paginated and split into encrypted frames, preventing long conversations from disconnecting. Load older messages without overwriting live replies, and retry failed requests.
+- 补齐 Codex 历史消息；新建和恢复会话都传递沙箱限制，手机明确显示只读/项目内可写/完全访问，不再暗示逐操作审批。
+  Display Codex conversation history and apply sandbox settings to both new and resumed turns. Mobile permissions clearly distinguish read-only, workspace-write and full access without implying per-action approvals.
+- 修复手机粘贴邀请后的配对事件没有接入的问题。
+  Fix pairing after pasting an invitation on mobile.
+
+### 移除 / Removed
+
+- 移除移动端内置语音输入、原生识别插件和录音权限；语音转文字交给手机输入法，App 只接收输入文字。
+  Remove built-in voice input, speech-recognition plugins and microphone permission. Use the phone keyboard's dictation instead.
+
+### 升级说明 / Upgrade notes
+
+- 手机和电脑均需更新至 0.6.2，并在电脑“手机遥控”页停止、重新启动主机组件，才能使用新版历史加载。沿用 0.6.1 安卓正式签名，可覆盖升级并保留配对；0.6.0 仍需按签名迁移说明卸载重装。
+  Update both desktop and mobile to 0.6.2, then stop and start the host from the desktop Phone remote page to enable paginated history. Android retains the 0.6.1 release signing key for in-place updates that preserve pairings; 0.6.0 still requires the documented signing migration.
+
 ## [0.6.1] - 2026-11-13
 
 ### 重要：安卓签名迁移 / Important: Android signing change

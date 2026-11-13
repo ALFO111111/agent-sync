@@ -11,49 +11,133 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ALFO111111/agent-sync/internal/agentsessions/codexhistory"
 	"github.com/ALFO111111/agent-sync/internal/remotev1"
 )
 
-const (
-	maxHistoryBytes = 8 << 20
-	maxHistoryMsgs  = 200
-)
+const maxHistoryBytes = 64 << 20
 
-// History 读取 Claude 会话文件，返回进入老会话时要显示的历史消息。
+// History returns a bounded, complete snapshot; oversized input is an explicit error.
 func (s *sessionService) History(tool, cwd, sessionID string) ([]remotev1.HistoryMessage, error) {
-	if tool == "codex" {
-		return nil, errors.New("history unsupported for codex")
-	}
-	if sessionID == "" {
-		return nil, errors.New("missing session id")
-	}
-	if s.index == nil {
-		return nil, errors.New("session index unavailable")
-	}
-	projects, err := s.index.Projects()
-	if err != nil {
-		return nil, err
+	if sessionID == "" || len(sessionID) > 128 || strings.ContainsAny(sessionID, "/\\\\:") || sessionID == "." || sessionID == ".." {
+		return nil, errors.New("invalid session id")
 	}
 	var path string
-	for _, p := range projects {
-		if samePath(p.Cwd, cwd) {
-			path = filepath.Join(p.Path, sessionID+".jsonl")
-			break
+	var err error
+	switch tool {
+	case "codex":
+		if s.codexIdx == nil {
+			return nil, errors.New("codex index unavailable")
 		}
+		path, err = s.codexIdx.Resolve(cwd, sessionID)
+	case "", "claude":
+		if len(sessionID) != 36 || strings.Count(sessionID, "-") != 4 {
+			return nil, errors.New("invalid Claude session id")
+		}
+		if s.index == nil {
+			return nil, errors.New("session index unavailable")
+		}
+		ps, e := s.index.Projects()
+		if e != nil {
+			return nil, e
+		}
+		for _, p := range ps {
+			if samePath(p.Cwd, cwd) {
+				entries, e := os.ReadDir(p.Path)
+				if e != nil {
+					return nil, e
+				}
+				for _, entry := range entries {
+					if entry.Name() == sessionID+".jsonl" && entry.Type().IsRegular() {
+						if path != "" {
+							return nil, errors.New("ambiguous session id")
+						}
+						path = filepath.Join(p.Path, entry.Name())
+					}
+				}
+			}
+		}
+	default:
+		return nil, errors.New("unsupported history tool")
+	}
+	if err != nil {
+		return nil, err
 	}
 	if path == "" {
 		return nil, errors.New("session not found")
 	}
-	f, err := os.Open(path)
+	// Reject symlink traversal through any component of the indexed file path.
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	for p := abs; ; p = filepath.Dir(p) {
+		fi, e := os.Lstat(p)
+		if e != nil {
+			return nil, e
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return nil, errors.New("history: symlink rejected")
+		}
+		if filepath.Dir(p) == p {
+			break
+		}
+	}
+	f, err := os.Open(abs)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxHistoryBytes))
+	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	return parseHistory(data), nil
+	if !fi.Mode().IsRegular() || fi.Size() > maxHistoryBytes {
+		return nil, errors.New("history: file exceeds 64 MiB or is not regular")
+	}
+	return readHistory(io.NewSectionReader(f, 0, fi.Size()), tool)
+}
+
+func readHistory(r io.Reader, tool string) ([]remotev1.HistoryMessage, error) {
+	out := make([]remotev1.HistoryMessage, 0)
+	br := bufio.NewReader(r)
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			var m remotev1.HistoryMessage
+			var ok bool
+			if tool == "codex" {
+				v, e := codexhistory.Parse(line)
+				if e != nil {
+					return nil, errors.New("history: malformed Codex JSONL")
+				}
+				m.Role, m.Text = v.Conversation()
+				m.Time = historyTime(v.Timestamp)
+				ok = m.Role != "" && m.Text != ""
+			} else {
+				if !json.Valid(line) {
+					return nil, errors.New("history: malformed Claude JSONL")
+				}
+				m, ok = parseHistoryLine(line)
+			}
+			if ok {
+				out = append(out, m)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+func historyTime(ts string) string {
+	if t, e := time.Parse(time.RFC3339Nano, ts); e == nil {
+		return t.Format(time.RFC3339)
+	}
+	return ""
 }
 
 func samePath(a, b string) bool {
@@ -64,17 +148,7 @@ func samePath(a, b string) bool {
 }
 
 func parseHistory(data []byte) []remotev1.HistoryMessage {
-	out := make([]remotev1.HistoryMessage, 0, 64)
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	for sc.Scan() {
-		if m, ok := parseHistoryLine(sc.Bytes()); ok {
-			out = append(out, m)
-		}
-	}
-	if len(out) > maxHistoryMsgs {
-		out = out[len(out)-maxHistoryMsgs:]
-	}
+	out, _ := readHistory(bytes.NewReader(data), "claude")
 	return out
 }
 

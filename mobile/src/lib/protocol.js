@@ -104,8 +104,8 @@ class Link {
       this.onSessionEvent(msg)
       return
     }
-    const w = this.waiters.shift()
-    if (w) w.ok(msg)
+    const index = this.waiters.findIndex(w => !w.pred || w.pred(msg))
+    if (index >= 0) this.waiters.splice(index, 1)[0].ok(msg)
     else this.queue.push(msg)
   }
 
@@ -126,12 +126,23 @@ class Link {
     })
   }
 
-  async until(pred, timeoutMs = 30000) {
-    const deadline = Date.now() + timeoutMs
-    for (;;) {
-      const msg = await this.next(Math.max(1, deadline - Date.now()))
-      if (pred(msg)) return msg
-    }
+  until(pred, timeoutMs = 30000) {
+    const index = this.queue.findIndex(pred)
+    if (index >= 0) return Promise.resolve(this.queue.splice(index, 1)[0])
+    if (this.closed) return Promise.reject(new Error('disconnected'))
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const index = this.waiters.indexOf(waiter)
+        if (index >= 0) this.waiters.splice(index, 1)
+        reject(new Error('timeout'))
+      }, timeoutMs)
+      const waiter = {
+        pred,
+        ok: msg => { clearTimeout(timer); resolve(msg) },
+        fail: err => { clearTimeout(timer); reject(err) },
+      }
+      this.waiters.push(waiter)
+    })
   }
 
   // 开启内层加密：手机→电脑用 c2h，电脑→手机用 h2c。
@@ -262,16 +273,38 @@ export class Session {
     return reply.overview || null
   }
 
-  // 打开老会话时加载历史消息。
-  async history(tool, cwd, sessionId) {
+  // 按页加载，单条长消息也可能跨多个加密帧。
+  async historyPage(tool, cwd, sessionId, cursor = '') {
+    if (!this.ready.features?.includes('history.paged.v1')) {
+      throw new Error('电脑遥控组件版本较旧，请更新并重启电脑端后查看历史')
+    }
     const id = Math.random().toString(16).slice(2, 12)
-    this.link.send({ v: 1, type: 'session.history', id, tool, cwd, sessionId })
-    const reply = await this.link.until(
-      m => ((m.type === 'session.history' && m.id === id) || (m.type === 'session.error' && m.id === id)),
-      20000,
-    )
-    if (reply.type !== 'session.history') throw new Error(reply.error || 'history failed')
-    return reply.messages || []
+    this.link.send({ v: 1, type: 'session.history', id, tool, cwd, sessionId, cursor, limit: 50 })
+    const parts = []
+    let bytes = 0
+    const deadline = Date.now() + 60000
+    for (let index = 0; ; index++) {
+      const reply = await this.link.until(
+        m => m.id === id && ['session.history.chunk', 'session.error'].includes(m.type),
+        Math.max(1, deadline - Date.now()),
+      )
+      if (reply.type === 'session.error') throw new Error(reply.error || '历史加载失败')
+      if (reply.chunkIndex !== index || typeof reply.data !== 'string') throw new Error('历史分块顺序异常，请重试')
+      bytes += enc.encode(reply.data).length
+      if (bytes > 32 * 1024 * 1024 || index > 16384) throw new Error('历史页过大，请在电脑上查看')
+      parts.push(reply.data)
+      if (reply.done) {
+        const messages = JSON.parse(parts.join(''))
+        if (!Array.isArray(messages) || messages.some(m => !m || typeof m.text !== 'string' || !['user', 'assistant', 'tool'].includes(m.role))) {
+          throw new Error('历史格式异常')
+        }
+        return { messages, cursor: reply.cursor || '', hasMore: !!reply.hasMore, snapshot: reply.snapshot || '' }
+      }
+    }
+  }
+
+  async history(tool, cwd, sessionId) {
+    return (await this.historyPage(tool, cwd, sessionId)).messages
   }
 
   // 电脑端仍在运行的会话，断线重连后用来接回。
@@ -391,7 +424,7 @@ export class Session {
 }
 
 async function handshake(link, device, name, invitation, onPending) {
-  const hello = { v: 1, type: 'hello', devicePub: device.publicKey, deviceName: name }
+  const hello = { v: 1, type: 'hello', devicePub: device.publicKey, deviceName: name, features: ['history.paged.v1'] }
   if (invitation) {
     hello.inviteId = invitation.id
     hello.inviteSecret = invitation.secret

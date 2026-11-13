@@ -1,7 +1,7 @@
 {
   "name": "agent-sync-mobile",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.6.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,6 @@
     "android:build": "cap sync android && cd android && gradlew.bat assembleDebug"
   },
   "dependencies": {
-    "@capacitor-community/speech-recognition": "^7.0.1",
     "@capacitor-mlkit/barcode-scanning": "^7.5.0",
     "@capacitor/android": "^7.4.3",
     "@capacitor/app": "^7.0.2",

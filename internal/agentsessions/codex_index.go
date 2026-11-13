@@ -2,7 +2,8 @@ package agentsessions
 
 import (
 	"bufio"
-	"encoding/json"
+	"errors"
+	"github.com/ALFO111111/agent-sync/internal/agentsessions/codexhistory"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,10 +23,15 @@ func NewCodexIndex() (*CodexIndex, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &CodexIndex{Root: filepath.Join(home, ".codex", "sessions")}, nil
+	root := os.Getenv("CODEX_HOME")
+	if root == "" {
+		root = filepath.Join(home, ".codex")
+	}
+	return &CodexIndex{Root: filepath.Join(root, "sessions")}, nil
 }
 
 type codexSession struct {
+	Path      string
 	ID        string
 	Title     string
 	Cwd       string
@@ -82,6 +88,12 @@ func (i *CodexIndex) scan() ([]codexSession, error) {
 	var files []string
 	err := filepath.WalkDir(i.Root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
+			if os.IsNotExist(err) && p == i.Root {
+				return filepath.SkipAll
+			}
+			return err
+		}
+		if d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 		if d.IsDir() {
@@ -90,8 +102,8 @@ func (i *CodexIndex) scan() ([]codexSession, error) {
 		base := d.Name()
 		if strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl") {
 			files = append(files, p)
-			if len(files) >= 2000 {
-				return filepath.SkipAll
+			if len(files) > 100000 {
+				return errors.New("codex: index exceeds 100000 files")
 			}
 		}
 		return nil
@@ -108,6 +120,27 @@ func (i *CodexIndex) scan() ([]codexSession, error) {
 	return out, nil
 }
 
+// Resolve locates a session from trusted rollout metadata, never a client path.
+func (i *CodexIndex) Resolve(cwd, id string) (string, error) {
+	sessions, err := i.scan()
+	if err != nil {
+		return "", err
+	}
+	found := ""
+	for _, s := range sessions {
+		if s.ID == id && samePath(s.Cwd, cwd) {
+			if found != "" {
+				return "", errors.New("codex: ambiguous session id")
+			}
+			found = s.Path
+		}
+	}
+	if found == "" {
+		return "", errors.New("codex: session not found")
+	}
+	return found, nil
+}
+
 // readCodexMeta 读取 rollout 的首行元数据和第一条用户消息作为标题。
 func readCodexMeta(path string) (codexSession, bool) {
 	f, err := os.Open(path)
@@ -120,6 +153,7 @@ func readCodexMeta(path string) (codexSession, bool) {
 		return codexSession{}, false
 	}
 	var s codexSession
+	s.Path = path
 	s.UpdatedAt = fi.ModTime()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 256*1024), 1024*1024)
@@ -130,26 +164,17 @@ func readCodexMeta(path string) (codexSession, bool) {
 		if read > 512*1024 {
 			break
 		}
-		var raw struct {
-			Type    string `json:"type"`
-			Payload struct {
-				SessionID string `json:"session_id"`
-				Cwd       string `json:"cwd"`
-				Type      string `json:"type"`
-				Role      string `json:"role"`
-				Content   []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"payload"`
-		}
-		if json.Unmarshal(line, &raw) != nil {
+		raw, err := codexhistory.Parse(line)
+		if err != nil {
 			continue
 		}
-		if raw.Type == "session_meta" {
-			s.ID = raw.Payload.SessionID
+		if raw.Type == "session_meta" && s.ID == "" {
+			s.ID = raw.SessionID()
 			s.Cwd = raw.Payload.Cwd
 			continue
+		}
+		if role, text := raw.Conversation(); s.Title == "" && role == "user" && text != "" {
+			s.Title = truncateTitle(text)
 		}
 		if s.Title == "" && raw.Type == "response_item" && raw.Payload.Type == "message" && raw.Payload.Role == "user" {
 			for _, c := range raw.Payload.Content {
