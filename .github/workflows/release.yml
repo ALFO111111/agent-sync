@@ -14,9 +14,31 @@ permissions:
   contents: write # 创建 Release、上传文件
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: context.ref });
+            const sha = commit.sha;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              ...context.repo, workflow_id: 'ci.yml', head_sha: sha, event: 'push', per_page: 100,
+            });
+            const candidates = runs.filter(r => r.head_sha === sha && ['main', 'master'].includes(r.head_branch))
+              .sort((a, b) => b.id - a.id);
+            const run = candidates[0];
+            if (!run || run.status !== 'completed' || run.conclusion !== 'success') {
+              core.setFailed(`Release requires successful main CI for exact commit ${sha}; current=${run?.conclusion || run?.status || 'missing'}. Push main and wait for CI before tagging.`);
+            } else core.info(`Exact-commit CI passed: ${run.html_url}`);
+
   build:
+    needs: preflight
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -50,26 +72,10 @@ jobs:
 
       - uses: ./.github/actions/validate
 
-      - name: Build self-contained desktop and check bundled host
-        shell: bash
-        env:
-          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
-        run: go run ./scripts/build-desktop -platform '${{ matrix.platform }}' -version "$RELEASE_VERSION"
-
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory dist | Out-Null
-          Copy-Item build/bin/agent-sync.exe dist/agent-sync.exe
-
-      - name: Package (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          v='${{ steps.ver.outputs.version }}'
-          mkdir dist
-          scripts/package-dmg.sh build/bin/agent-sync.app "dist/agent-sync-$v-macos-arm64.dmg"
+      - uses: ./.github/actions/package-desktop
+        with:
+          platform: ${{ matrix.platform }}
+          version: ${{ steps.ver.outputs.version }}
 
       - uses: actions/upload-artifact@v7
         with:
@@ -78,6 +84,7 @@ jobs:
           if-no-files-found: error
 
   android:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

@@ -1,0 +1,48 @@
+name: Package desktop
+description: Build and verify the actual Windows executable or mounted macOS DMG
+inputs:
+  version:
+    required: true
+    description: Product version or dev
+  platform:
+    required: true
+    description: windows/amd64 or darwin/arm64
+runs:
+  using: composite
+  steps:
+    - name: Toolchain diagnostics
+      shell: bash
+      run: |
+        set -euo pipefail
+        printf 'Runner: %s / %s\n' "$RUNNER_OS" "$RUNNER_ARCH"
+        git rev-parse HEAD
+        go version
+        node --version
+        wails version
+        if [ "$RUNNER_OS" = macOS ]; then
+          sw_vers
+          xcodebuild -version
+        fi
+    - name: Build desktop and probe bundled host
+      shell: bash
+      env:
+        PRODUCT_VERSION: ${{ inputs.version }}
+        TARGET_PLATFORM: ${{ inputs.platform }}
+      run: go run ./scripts/build-desktop -platform "$TARGET_PLATFORM" -version "$PRODUCT_VERSION"
+    - name: Package Windows executable
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p dist
+        cp build/bin/agent-sync.exe dist/agent-sync.exe
+        test -s dist/agent-sync.exe
+    - name: Package and verify macOS DMG
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        PRODUCT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        mkdir -p dist
+        scripts/package-dmg.sh build/bin/agent-sync.app "dist/agent-sync-$PRODUCT_VERSION-macos-arm64.dmg"

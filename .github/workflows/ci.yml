@@ -51,6 +51,7 @@ jobs:
       # 和 Release 共用门禁，确保打标签不能绕过检查。
       - uses: ./.github/actions/validate
 
-      - name: Build self-contained desktop and check bundled host
-        shell: bash
-        run: go run ./scripts/build-desktop -platform "${{ runner.os == 'Windows' && 'windows/amd64' || 'darwin/arm64' }}" -version dev
+      - uses: ./.github/actions/package-desktop
+        with:
+          platform: ${{ runner.os == 'Windows' && 'windows/amd64' || 'darwin/arm64' }}
+          version: dev

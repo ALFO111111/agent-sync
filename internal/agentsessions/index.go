@@ -7,13 +7,14 @@ package agentsessions
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/ALFO111111/agent-sync/internal/project"
 )
 
 const (
@@ -53,7 +54,15 @@ func NewIndex() (*Index, error) {
 
 // Projects 列出有会话的项目，按最近更新排序。
 func (i *Index) Projects() ([]Project, error) {
-	entries, err := os.ReadDir(i.Root)
+	root, err := openTrustedRoot(i.Root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -65,26 +74,43 @@ func (i *Index) Projects() ([]Project, error) {
 		if !e.IsDir() {
 			continue
 		}
+		if root.check(e.Name()) != nil {
+			continue
+		}
 		dir := filepath.Join(i.Root, e.Name())
-		files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+		files, _ := fs.ReadDir(root.FS(), e.Name())
 		count := 0
 		var newest time.Time
-		for _, f := range files {
-			base := filepath.Base(f)
-			if !looksLikeSession(base) {
+		var cwdUpdated time.Time
+		var cwd string
+		for _, entry := range files {
+			if !entry.Type().IsRegular() || !looksLikeSession(entry.Name()) {
 				continue
 			}
-			count++
-			if fi, err := os.Stat(f); err == nil && fi.ModTime().After(newest) {
-				newest = fi.ModTime()
+			f, err := root.open(filepath.Join(e.Name(), entry.Name()))
+			if err != nil {
+				continue
 			}
+			fi, err := f.Stat()
+			if err == nil && fi.Mode().IsRegular() {
+				count++
+				if fi.ModTime().After(newest) {
+					newest = fi.ModTime()
+				}
+				if fi.ModTime().After(cwdUpdated) {
+					if value := sessionCwd(f); value != "" {
+						cwd, cwdUpdated = value, fi.ModTime()
+					}
+				}
+			}
+			f.Close()
 		}
 		if count == 0 {
 			continue
 		}
 		out = append(out, Project{
 			Path:      dir,
-			Cwd:       project.ReadCwd(dir),
+			Cwd:       cwd,
 			Sessions:  count,
 			UpdatedAt: newest,
 		})
@@ -99,24 +125,44 @@ func (i *Index) Sessions(cwd string) ([]Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	root, err := openTrustedRoot(i.Root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer root.Close()
 	var out []Session
 	for _, p := range projects {
 		if cwd != "" && !samePath(p.Cwd, cwd) {
 			continue
 		}
-		files, _ := filepath.Glob(filepath.Join(p.Path, "*.jsonl"))
-		for _, f := range files {
-			base := filepath.Base(f)
+		rel, err := filepath.Rel(i.Root, p.Path)
+		if err != nil || root.check(rel) != nil {
+			continue
+		}
+		files, _ := fs.ReadDir(root.FS(), filepath.ToSlash(rel))
+		for _, entry := range files {
+			base := entry.Name()
+			f := filepath.Join(p.Path, base)
 			if !looksLikeSession(base) {
 				continue
 			}
-			fi, err := os.Stat(f)
+			file, err := root.openPath(f)
 			if err != nil {
 				continue
 			}
+			fi, err := file.Stat()
+			if err != nil || !fi.Mode().IsRegular() {
+				file.Close()
+				continue
+			}
+			title := sessionTitleReader(file)
+			file.Close()
 			out = append(out, Session{
 				ID:        strings.TrimSuffix(base, ".jsonl"),
-				Title:     sessionTitle(f),
+				Title:     title,
 				Cwd:       p.Cwd,
 				UpdatedAt: fi.ModTime(),
 			})
@@ -144,6 +190,10 @@ func sessionTitle(path string) string {
 		return ""
 	}
 	defer f.Close()
+	return sessionTitleReader(f)
+}
+
+func sessionTitleReader(f io.Reader) string {
 	r := bufio.NewReaderSize(f, 64*1024)
 	var read int
 	for read < maxTitleBytes {
@@ -200,7 +250,71 @@ func truncateTitle(s string) string {
 	return string(r)
 }
 
-func samePath(a, b string) bool {
-	clean := func(p string) string { return strings.TrimRight(filepath.Clean(p), string(filepath.Separator)) }
-	return strings.EqualFold(clean(a), clean(b))
+func samePath(a, b string) bool { return SameLocalPath(a, b) }
+
+func sessionCwd(f io.Reader) string {
+	r := bufio.NewReaderSize(f, 64*1024)
+	for n := 0; n < 200; n++ {
+		line, err := r.ReadBytes('\n')
+		var v struct {
+			Cwd string `json:"cwd"`
+		}
+		if json.Unmarshal(line, &v) == nil && v.Cwd != "" {
+			return v.Cwd
+		}
+		if err != nil {
+			break
+		}
+	}
+	return ""
+}
+
+// Resolve locates a Claude session by indexed cwd and ID, never by a client path.
+func (i *Index) Resolve(cwd, id string) (string, error) {
+	if !looksLikeSession(id+".jsonl") || strings.ContainsAny(id, `/\\:`) {
+		return "", errors.New("invalid Claude session id")
+	}
+	projects, err := i.Projects()
+	if err != nil {
+		return "", err
+	}
+	root, err := openTrustedRoot(i.Root)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	found := ""
+	for _, p := range projects {
+		if !samePath(p.Cwd, cwd) {
+			continue
+		}
+		path := filepath.Join(p.Path, id+".jsonl")
+		f, e := root.openPath(path)
+		if e != nil {
+			continue
+		}
+		f.Close()
+		if found != "" {
+			return "", errors.New("ambiguous session id")
+		}
+		found = path
+	}
+	if found == "" {
+		return "", errors.New("session not found")
+	}
+	return found, nil
+}
+
+// OpenSession revalidates the indexed path below its trusted root at open time.
+func (i *Index) OpenSession(path string) (*os.File, error) { return openIndexedSession(i.Root, path) }
+func (i *CodexIndex) OpenSession(path string) (*os.File, error) {
+	return openIndexedSession(i.Root, path)
+}
+func openIndexedSession(rootPath, path string) (*os.File, error) {
+	root, err := openTrustedRoot(rootPath)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.openPath(path)
 }

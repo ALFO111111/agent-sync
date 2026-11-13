@@ -7,10 +7,10 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/ALFO111111/agent-sync/internal/agentsessions"
 	"github.com/ALFO111111/agent-sync/internal/agentsessions/codexhistory"
 	"github.com/ALFO111111/agent-sync/internal/remotev1"
 )
@@ -37,26 +37,7 @@ func (s *sessionService) History(tool, cwd, sessionID string) ([]remotev1.Histor
 		if s.index == nil {
 			return nil, errors.New("session index unavailable")
 		}
-		ps, e := s.index.Projects()
-		if e != nil {
-			return nil, e
-		}
-		for _, p := range ps {
-			if samePath(p.Cwd, cwd) {
-				entries, e := os.ReadDir(p.Path)
-				if e != nil {
-					return nil, e
-				}
-				for _, entry := range entries {
-					if entry.Name() == sessionID+".jsonl" && entry.Type().IsRegular() {
-						if path != "" {
-							return nil, errors.New("ambiguous session id")
-						}
-						path = filepath.Join(p.Path, entry.Name())
-					}
-				}
-			}
-		}
+		path, err = s.index.Resolve(cwd, sessionID)
 	default:
 		return nil, errors.New("unsupported history tool")
 	}
@@ -66,24 +47,12 @@ func (s *sessionService) History(tool, cwd, sessionID string) ([]remotev1.Histor
 	if path == "" {
 		return nil, errors.New("session not found")
 	}
-	// Reject symlink traversal through any component of the indexed file path.
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
+	var f *os.File
+	if tool == "codex" {
+		f, err = s.codexIdx.OpenSession(path)
+	} else {
+		f, err = s.index.OpenSession(path)
 	}
-	for p := abs; ; p = filepath.Dir(p) {
-		fi, e := os.Lstat(p)
-		if e != nil {
-			return nil, e
-		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return nil, errors.New("history: symlink rejected")
-		}
-		if filepath.Dir(p) == p {
-			break
-		}
-	}
-	f, err := os.Open(abs)
 	if err != nil {
 		return nil, err
 	}
@@ -140,12 +109,7 @@ func historyTime(ts string) string {
 	return ""
 }
 
-func samePath(a, b string) bool {
-	clean := func(p string) string {
-		return strings.TrimRight(filepath.Clean(p), string(filepath.Separator))
-	}
-	return strings.EqualFold(clean(a), clean(b))
-}
+func samePath(a, b string) bool { return agentsessions.SameLocalPath(a, b) }
 
 func parseHistory(data []byte) []remotev1.HistoryMessage {
 	out, _ := readHistory(bytes.NewReader(data), "claude")

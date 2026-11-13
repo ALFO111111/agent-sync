@@ -123,7 +123,7 @@ frontend/src/           Vue 3：api/ 调后端，i18n/ 界面文字，views/ 页
 
 ### 发布流程（维护者）
 
-1. 在 `CHANGELOG.md` 把 `## [Unreleased]` 改成 `## [0.x.y] - 日期`，在上面再留一个空的 `## [Unreleased]`，提交
+1. 在 `CHANGELOG.md` 把 `## [Unreleased]` 改成 `## [0.x.y] - 日期`，在上面再留一个空的 `## [Unreleased]`，提交并推送 main。必须等待**该提交 SHA**的 CI 全部成功：Windows/macOS 都执行完整桌面打包，macOS 额外验证 DMG 挂载、复制后的 App 架构和离线 host。不能只看本机 Windows 测试通过就打标签；Release 会检查同 SHA 的 main CI，未成功则拒绝发布。
 2. 用**同一提交**构建签名 Android release APK（`mobile` 下 `npm ci && npm test && npm run build && npx cap sync android`，使用 JDK 21，设置 `AGENT_SYNC_SIGNING_PROPERTIES` 指向仓库外私密 properties 后运行 `gradlew assembleRelease --no-daemon`）。签名 properties 包含 `storeFile/storePassword/keyAlias/keyPassword`，不得提交。0.6.1 起必须沿用新长期密钥，公开指纹记录在 `mobile/android/release-certificate.sha256`。
 3. 先创建 `v0.x.y` 的 **draft Release**，暂存 `agent-sync-0.x.y-android.apk` 和 `android-build.json`（字段：`sourceCommit` 完整提交哈希、`version`、APK 的 `sha256`）。上传完成才运行 `git tag v0.x.y && git push origin v0.x.y`。
 4. GitHub Actions 在 Windows/macOS 上执行与 CI 相同的检查，再通过 `go run ./scripts/build-desktop -platform windows/amd64 -version 0.x.y`（Mac 用 `darwin/arm64`）构建和自检内置 host。Android job 测试前端，并验证 draft APK 的源码哈希、版本、包名、非 debug 和签名指纹；任一项失败不会公开 Release。

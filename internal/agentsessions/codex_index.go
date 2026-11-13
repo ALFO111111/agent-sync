@@ -3,13 +3,14 @@ package agentsessions
 import (
 	"bufio"
 	"errors"
-	"github.com/ALFO111111/agent-sync/internal/agentsessions/codexhistory"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/ALFO111111/agent-sync/internal/agentsessions/codexhistory"
 	"github.com/ALFO111111/agent-sync/internal/i18n"
 )
 
@@ -85,8 +86,16 @@ func (i *CodexIndex) Sessions(cwd string) ([]Session, error) {
 }
 
 func (i *CodexIndex) scan() ([]codexSession, error) {
+	root, err := openTrustedRoot(i.Root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer root.Close()
 	var files []string
-	err := filepath.WalkDir(i.Root, func(p string, d os.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) && p == i.Root {
 				return filepath.SkipAll
@@ -94,6 +103,12 @@ func (i *CodexIndex) scan() ([]codexSession, error) {
 			return err
 		}
 		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if err := root.check(filepath.FromSlash(p)); err != nil {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
@@ -113,7 +128,13 @@ func (i *CodexIndex) scan() ([]codexSession, error) {
 	}
 	out := make([]codexSession, 0, len(files))
 	for _, f := range files {
-		if s, ok := readCodexMeta(f); ok {
+		file, err := root.open(filepath.FromSlash(f))
+		if err != nil {
+			continue
+		}
+		s, ok := readCodexMetaFile(file, filepath.Join(i.Root, filepath.FromSlash(f)))
+		file.Close()
+		if ok {
 			out = append(out, s)
 		}
 	}
@@ -148,8 +169,12 @@ func readCodexMeta(path string) (codexSession, bool) {
 		return codexSession{}, false
 	}
 	defer f.Close()
+	return readCodexMetaFile(f, path)
+}
+
+func readCodexMetaFile(f *os.File, path string) (codexSession, bool) {
 	fi, err := f.Stat()
-	if err != nil {
+	if err != nil || !fi.Mode().IsRegular() {
 		return codexSession{}, false
 	}
 	var s codexSession

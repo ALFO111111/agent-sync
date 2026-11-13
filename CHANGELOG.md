@@ -15,6 +15,8 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
   Mobile history is paginated and split into encrypted frames, preventing long conversations from disconnecting. Load older messages without overwriting live replies, and retry failed requests.
 - 补齐 Codex 历史消息；新建和恢复会话都传递沙箱限制，手机明确显示只读/项目内可写/完全访问，不再暗示逐操作审批。
   Display Codex conversation history and apply sandbox settings to both new and resumed turns. Mobile permissions clearly distinguish read-only, workspace-write and full access without implying per-action approvals.
+- 修复 macOS 系统目录别名导致历史读取被误拒绝的问题，统一可信索引根处理并保留根内链接逃逸防护；普通 CI 现在也执行完整 DMG 打包和挂载自检，发布必须等待同提交双平台 CI 成功。
+  Fix history reads through macOS system directory aliases while preserving indexed-root confinement. CI now verifies mounted DMGs, and releases require successful CI for the exact commit.
 - 修复手机粘贴邀请后的配对事件没有接入的问题。
   Fix pairing after pasting an invitation on mobile.
 
