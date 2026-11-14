@@ -17,6 +17,8 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
   Official mode adds account sign-in and short-lived MQTT tokens; self-hosted mode accepts a custom broker, username and password. Session content remains end-to-end encrypted with AES-256-GCM.
 - 流式输出按 100ms 合批，附件改为 64 KiB 分块；断线后按事件序号补发。
   Streaming output is batched every 100ms, attachments use 64 KiB chunks, and reconnects resume by event sequence.
+- 新增独立认证服务 `agent-sync-auth`：用户名密码开放注册、Argon2id、连续 5 次失败锁定 30 分钟、5 台电脑/2 台手机限制，并为 Mosquitto 提供连接与主题鉴权。
+  Add the standalone `agent-sync-auth` service: open username/password registration, Argon2id, 30-minute lock after 5 failures, 5-computer/2-phone limits, and Mosquitto authentication/ACL endpoints.
 
 ### 移除 / Removed
 

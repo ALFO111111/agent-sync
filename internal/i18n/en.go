@@ -364,7 +364,7 @@ Options:
 	"已删除设备记录":                         "Device record deleted",
 	"Broker 地址格式不对":                    "Invalid broker address",
 	"Broker 地址只支持 http/https/ws/wss":   "Broker address must be http, https, ws or wss",
-	"登录失败：%s":                         "Sign-in failed: %s",
+	"账号请求失败：%s":                       "Account request failed: %s",
 	"登录响应缺少账号信息":                     "Sign-in response is missing the account",
 	"正在重连 MQTT（%s）":                   "Reconnecting MQTT (%s)",
 	"等待账号登录后连接 MQTT":                  "Waiting for sign-in before connecting MQTT",
