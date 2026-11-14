@@ -70,6 +70,71 @@ func TestHostPairingOverTransport(t *testing.T) {
 	nextOn(t, tr, "u/u1/h/h1/pair/d1")
 }
 
+func TestHostDispatchDeviceList(t *testing.T) {
+	key, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, key)
+	id, _ := NewIdentity()
+	auth.state.Devices = append(auth.state.Devices, Device{
+		ID: "d1", Name: "phone", PublicKey: id.PublicBase64(), Fingerprint: id.Fingerprint(),
+	})
+	host := &Host{Authority: auth, Name: "pc", Logf: func(string, ...any) {}}
+	tr := newFakeTransport()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go host.Run(ctx, tr, TopicSet{UID: "u1", HID: "h1", DID: "d1"})
+	<-tr.ready
+
+	f, _ := SealFrame(key, ClientToHost, "d1", 1, mustJSON(t, Envelope{
+		Type: "hello", DevicePub: id.PublicBase64(), DeviceName: "phone",
+	}))
+	tr.inject("u/u1/h/h1/pair/d1", mustJSON(t, f))
+
+	challenge := readEnvelope(t, key, auth.state.HostID, 1, nextOn(t, tr, "u/u1/h/h1/pair/d1"))
+	if challenge.Type != "challenge" {
+		t.Fatalf("want challenge, got %s", challenge.Type)
+	}
+
+	proof := Envelope{
+		Type: "proof", DevicePub: id.PublicBase64(),
+		Signature: id.SignProof(challenge.Nonce, ""),
+	}
+	f, _ = SealFrame(key, ClientToHost, "d1", 2, mustJSON(t, proof))
+	tr.inject("u/u1/h/h1/pair/d1", mustJSON(t, f))
+
+	ready := readEnvelope(t, key, auth.state.HostID, 2, nextOn(t, tr, "u/u1/h/h1/pair/d1"))
+	if ready.Type != "ready" {
+		t.Fatalf("want ready, got %s", ready.Type)
+	}
+
+	f, _ = SealFrame(key, ClientToHost, "d1", 3, mustJSON(t, Envelope{Type: "device.list", ID: "q1"}))
+	tr.inject("u/u1/h/h1/req/d1", mustJSON(t, f))
+
+	reply := readEnvelope(t, key, auth.state.HostID, 3, nextOn(t, tr, "u/u1/h/h1/evt"))
+	if reply.Type != "devices" {
+		t.Fatalf("want devices, got %s", reply.Type)
+	}
+}
+
+func readEnvelope(t *testing.T, key ContentKey, from string, seq uint64, msg struct {
+	topic   string
+	payload []byte
+}) Envelope {
+	t.Helper()
+	var f Frame
+	if err := json.Unmarshal(msg.payload, &f); err != nil {
+		t.Fatal(err)
+	}
+	plain, err := OpenFrame(key, HostToClient, from, seq, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env Envelope
+	if err := json.Unmarshal(plain, &env); err != nil {
+		t.Fatal(err)
+	}
+	return env
+}
+
 func nextOn(t *testing.T, tr *fakeTransport, want string) struct {
 	topic   string
 	payload []byte

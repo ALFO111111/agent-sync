@@ -16,6 +16,10 @@ type deviceState struct {
 	name         string
 	inviteID     string
 	inviteSecret string
+	features     []string
+	historyPaged bool
+	history      historyPager
+	subs         int
 }
 
 func (h *Host) contentKey() ContentKey {
@@ -120,6 +124,12 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 		st.name = env.DeviceName
 		st.inviteID = env.InviteID
 		st.inviteSecret = env.InviteSecret
+		st.features = env.Features
+		for _, f := range env.Features {
+			if f == HistoryPagedFeature {
+				st.historyPaged = true
+			}
+		}
 		_ = h.reply(tr, ts.Pair(), hostID, h.nextSeq(did), Envelope{
 			Type: "challenge", Nonce: st.nonce, HostID: hostID, HostName: h.Name,
 		}, 1)
@@ -164,15 +174,228 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 		if st.device.ID == "" {
 			return
 		}
-		h.dispatchEnvelope(ctx, tr, ts, did, env)
+		h.dispatchEnvelope(ctx, tr, ts, did, st, env)
 	}
 }
 
-// dispatchEnvelope 在 Task 6 替换为完整业务分发。
-func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, did string, env Envelope) {
-	_ = h.reply(tr, ts.Evt(), h.Authority.State().HostID, h.nextSeq(did), Envelope{
-		Type: "error", Error: "unsupported",
-	}, 1)
+// dispatchEnvelope 把业务请求映射到现有 Files/Sessions/Data 能力。
+// 调用方必须持有 st.mu。
+func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, did string, st *deviceState, env Envelope) {
+	hostID := h.Authority.State().HostID
+	send := func(e Envelope) error {
+		return h.reply(tr, ts.Evt(), hostID, h.nextSeq(did), e, 1)
+	}
+
+	switch env.Type {
+	case "ping":
+		_ = send(Envelope{Type: "pong"})
+
+	case "echo":
+		if len(env.Data) > 4096 {
+			return
+		}
+		_ = send(Envelope{Type: "echo", ID: env.ID, Data: env.Data})
+
+	case "device.list":
+		_ = send(Envelope{Type: "devices", ID: env.ID, Devices: h.DeviceList()})
+
+	case "status":
+		_ = send(Envelope{Type: "status", ID: env.ID, DeviceID: st.device.ID, HostID: hostID, HostName: h.Name})
+
+	case "data.overview":
+		if h.Data == nil {
+			_ = send(Envelope{Type: "data.overview", ID: env.ID, Error: "overview unsupported"})
+			return
+		}
+		ov, err := h.Data.Overview()
+		if err != nil {
+			_ = send(Envelope{Type: "data.overview", ID: env.ID, Error: err.Error()})
+			return
+		}
+		ov.HostName = h.Name
+		_ = send(Envelope{Type: "data.overview", ID: env.ID, Overview: &ov})
+
+	case "fs.list":
+		if h.Files == nil {
+			_ = send(Envelope{Type: "fs.error", ID: env.ID, Error: "files unsupported"})
+			return
+		}
+		entries, err := h.Files.List(env.Cwd, env.Path)
+		if err != nil {
+			_ = send(Envelope{Type: "fs.error", ID: env.ID, Error: err.Error()})
+			return
+		}
+		_ = send(Envelope{Type: "fs.list", ID: env.ID, Path: env.Path, Entries: entries})
+
+	case "fs.read":
+		if h.Files == nil {
+			_ = send(Envelope{Type: "fs.error", ID: env.ID, Error: "files unsupported"})
+			return
+		}
+		text, truncated, binary, next, err := h.Files.Read(env.Cwd, env.Path, env.Offset)
+		if err != nil {
+			_ = send(Envelope{Type: "fs.error", ID: env.ID, Error: err.Error()})
+			return
+		}
+		resp := Envelope{Type: "fs.read", ID: env.ID, Path: env.Path, Text: text,
+			Truncated: truncated, Binary: binary, Next: next}
+		for len(resp.Text) > 0 {
+			b, _ := json.Marshal(resp)
+			if len(b) <= MaxPlain {
+				break
+			}
+			resp.Text = resp.Text[:len(resp.Text)/2]
+			resp.Next = env.Offset + int64(len(resp.Text))
+			resp.Truncated = true
+		}
+		_ = send(resp)
+
+	case "git.status":
+		if h.Files == nil {
+			_ = send(Envelope{Type: "fs.error", ID: env.ID, Error: "files unsupported"})
+			return
+		}
+		changes, err := h.Files.GitStatus(env.Cwd)
+		if err != nil {
+			_ = send(Envelope{Type: "fs.error", ID: env.ID, Error: err.Error()})
+			return
+		}
+		_ = send(Envelope{Type: "git.status", ID: env.ID, Changes: changes})
+
+	case "git.diff":
+		if h.Files == nil {
+			_ = send(Envelope{Type: "fs.error", ID: env.ID, Error: "files unsupported"})
+			return
+		}
+		text, truncated, err := h.Files.GitDiff(env.Cwd, env.Path)
+		if err != nil {
+			_ = send(Envelope{Type: "fs.error", ID: env.ID, Error: err.Error()})
+			return
+		}
+		_ = send(Envelope{Type: "git.diff", ID: env.ID, Path: env.Path, Text: text, Truncated: truncated})
+
+	case "session.history":
+		if h.Sessions == nil {
+			return
+		}
+		load := func() ([]HistoryMessage, error) { return h.Sessions.History(env.Tool, env.Cwd, env.ClaudeSessionID) }
+		if st.historyPaged {
+			chunks, err := st.history.page(env, load)
+			if err != nil {
+				_ = send(legacyHistory(env, nil, err))
+				return
+			}
+			for _, chunk := range chunks {
+				if send(chunk) != nil {
+					return
+				}
+			}
+			return
+		}
+		msgs, err := load()
+		_ = send(legacyHistory(env, msgs, err))
+
+	case "session.active":
+		if h.Sessions == nil {
+			_ = send(Envelope{Type: "session.active", ID: env.ID})
+			return
+		}
+		_ = send(Envelope{Type: "session.active", ID: env.ID, Active: h.Sessions.ActiveSessions()})
+
+	case "session.projects":
+		if h.Sessions == nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, Error: "sessions unsupported"})
+			return
+		}
+		list, err := h.Sessions.Projects(env.Tool)
+		if err != nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, Error: err.Error()})
+			return
+		}
+		_ = send(Envelope{Type: "session.projects", ID: env.ID, Projects: list})
+
+	case "session.list":
+		if h.Sessions == nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, Error: "sessions unsupported"})
+			return
+		}
+		list, err := h.Sessions.Sessions(env.Tool, env.Cwd)
+		if err != nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, Error: err.Error()})
+			return
+		}
+		_ = send(Envelope{Type: "session.list", ID: env.ID, Sessions: list})
+
+	case "session.start":
+		if h.Sessions == nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, Error: "sessions unsupported"})
+			return
+		}
+		key, claudeID, err := h.Sessions.Start(env.Tool, env.Cwd, env.ResumeID, env.Mode)
+		if err != nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, Error: err.Error()})
+			return
+		}
+		_ = send(Envelope{Type: "session.ready", ID: env.ID, SessionKey: key, ClaudeSessionID: claudeID})
+
+	case "turn.send":
+		if h.Sessions == nil {
+			return
+		}
+		if len(env.Attachments) > 0 {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "attachments unsupported"})
+			return
+		}
+		if err := h.Sessions.Send(env.SessionKey, env.Text, nil); err != nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
+		}
+
+	case "turn.stop":
+		if h.Sessions == nil {
+			return
+		}
+		if err := h.Sessions.Stop(env.SessionKey); err != nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
+		}
+
+	case "approval.decide":
+		if h.Sessions == nil {
+			return
+		}
+		if err := h.Sessions.Decide(env.SessionKey, env.ApprovalID, env.Allow); err != nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
+		}
+
+	case "session.setmode":
+		if h.Sessions == nil {
+			return
+		}
+		newKey, claudeID, err := h.Sessions.SetMode(env.SessionKey, env.Mode)
+		if err != nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
+			return
+		}
+		_ = send(Envelope{Type: "session.ready", ID: env.ID, SessionKey: newKey, ClaudeSessionID: claudeID, Mode: env.Mode})
+
+	case "session.close":
+		if h.Sessions == nil {
+			return
+		}
+		if err := h.Sessions.Close(env.SessionKey); err != nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
+			return
+		}
+		_ = send(Envelope{Type: "session.closed", ID: env.ID, SessionKey: env.SessionKey})
+
+	case "session.subscribe":
+		_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "unsupported"})
+
+	case "attach.begin", "attach.chunk", "attach.end":
+		_ = send(Envelope{Type: "attach.error", ID: env.ID, AttachID: env.AttachID, Error: "unsupported"})
+
+	default:
+		_ = send(Envelope{Type: "error", ID: env.ID, Error: "unsupported"})
+	}
 }
 
 func (h *Host) reply(tr Transport, topic string, from string, seq uint64, env Envelope, qos byte) error {
