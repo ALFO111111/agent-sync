@@ -1,0 +1,17 @@
+bindAddr = "0.0.0.0"
+bindPort = 7000
+auth.method = "token"
+auth.token = "<与 frpc 相同>"
+
+# 远端端口只绑回环：公网只暴露 80/443，由 nginx 转发。
+proxyBindAddr = "127.0.0.1"
+allowPorts = [
+  { start = 18000, end = 18000 },
+  { start = 18083, end = 18083 },
+  { start = 18765, end = 18765 },
+  { start = 19000, end = 19000 }
+]
+
+transport.maxPoolCount = 5
+transport.tcpMux = true
+# 不强制 TLS：其他 frpc 客户端可能还没开。

@@ -1,0 +1,14 @@
+serverAddr = "47.80.63.39"
+serverPort = 7000
+auth.method = "token"
+auth.token = "<与 frps 相同>"
+
+# 加密 ECS 与 Mac 之间的隧道：MQTT token 在 CONNECT 密码字段里。
+transport.tls.enable = true
+
+[[proxies]]
+name = "mqtt-ws"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8083
+remotePort = 18083
