@@ -30,9 +30,11 @@ func (p *HTTPTokenProvider) Credentials(ctx context.Context) (string, string, er
 		return p.username, p.password, nil
 	}
 	body, _ := json.Marshal(map[string]string{
-		"refreshToken": p.RefreshToken,
+		"sessionToken": p.RefreshToken,
 		"deviceId":     p.DeviceID,
 		"hostId":       p.HostID,
+		"role":         "host",
+		"scope":        "session",
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.BaseURL+"/v1/mqtt/token", bytes.NewReader(body))
 	if err != nil {
@@ -48,9 +50,9 @@ func (p *HTTPTokenProvider) Credentials(ctx context.Context) (string, string, er
 		return "", "", fmt.Errorf("token service: %s", resp.Status)
 	}
 	var out struct {
-		Username  string    `json:"username"`
-		Password  string    `json:"password"`
-		ExpiresAt time.Time `json:"expiresAt"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		ExpiresAt int64  `json:"expiresAt"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return "", "", err
@@ -58,6 +60,6 @@ func (p *HTTPTokenProvider) Credentials(ctx context.Context) (string, string, er
 	if out.Username == "" || out.Password == "" {
 		return "", "", fmt.Errorf("token service: empty credentials")
 	}
-	p.username, p.password, p.expiresAt = out.Username, out.Password, out.ExpiresAt
+	p.username, p.password, p.expiresAt = out.Username, out.Password, time.Unix(out.ExpiresAt, 0)
 	return p.username, p.password, nil
 }

@@ -164,7 +164,7 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 				_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "revoked"}, 1)
 				return
 			}
-			if err := h.registerDevice(ctx, hostID, device); err != nil {
+			if err := h.registerDevice(ctx, hostID, did, device); err != nil {
 				_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "device_limit"}, 1)
 				return
 			}
@@ -184,7 +184,7 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 			defer st.mu.Unlock()
 			if approved {
 				if d, ok := h.Authority.Device(st.pub); ok {
-					if err := h.registerDevice(ctx, hostID, d); err != nil {
+					if err := h.registerDevice(ctx, hostID, did, d); err != nil {
 						_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "device_limit"}, 1)
 						return
 					}
@@ -508,11 +508,11 @@ func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, 
 	}
 }
 
-func (h *Host) registerDevice(ctx context.Context, hostID string, d Device) error {
+func (h *Host) registerDevice(ctx context.Context, hostID, did string, d Device) error {
 	if h.Auth == nil {
 		return nil
 	}
-	return h.Auth.RegisterDevice(ctx, hostID, d.ID, d.Name, d.PublicKey)
+	return h.Auth.RegisterDevice(ctx, hostID, did, d.Name, d.PublicKey)
 }
 
 func (h *Host) releaseSub(did string) {

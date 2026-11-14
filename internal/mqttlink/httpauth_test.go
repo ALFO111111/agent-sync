@@ -14,10 +14,15 @@ func TestHTTPTokenProvider(t *testing.T) {
 		if r.URL.Path != "/v1/mqtt/token" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(map[string]string{
+		var in map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		if in["sessionToken"] != "r" || in["role"] != "host" || in["scope"] != "session" {
+			t.Fatalf("body = %+v", in)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
 			"username":  "u/u1/d/d1",
 			"password":  "jwt",
-			"expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339),
+			"expiresAt": time.Now().Add(time.Hour).Unix(),
 		})
 	}))
 	defer srv.Close()

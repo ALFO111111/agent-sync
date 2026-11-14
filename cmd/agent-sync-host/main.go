@@ -105,7 +105,11 @@ func run(args []string) int {
 			}
 		}
 		resp, err := sendControl(dir, ctlRequest{Cmd: "account", AccountID: rest[0], RefreshToken: rest[1]})
-		if err != nil || !resp.OK {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.T("命令失败：%s", err.Error()))
+			return 1
+		}
+		if !resp.OK {
 			fmt.Fprintln(os.Stderr, i18n.T("命令失败：%s", resp.Error))
 			return 1
 		}

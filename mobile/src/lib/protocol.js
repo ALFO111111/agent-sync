@@ -380,6 +380,7 @@ export async function reconnect(saved, device, onPending, conn = {}) {
     contentKey: saved.e2eeKey,
     hostID: saved.hostId,
     deviceID: did,
+    startSeq: saved.seq || 0,
   })
   try {
     return await connect(link, device, saved.name, null, onPending)

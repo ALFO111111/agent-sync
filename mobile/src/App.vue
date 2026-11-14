@@ -316,6 +316,7 @@ async function doPair(invitation) {
     name: session.ready.hostName || '电脑',
     deviceId: did,
     e2eeKey: invitation.contentKey,
+    seq: session.link.seq,
   }
   pairings.value = upsertPairing(pairings.value, entry)
   pairing.value = entry
@@ -344,6 +345,8 @@ async function doReconnect() {
   const creds = await credentialsFor(pairing.value.hostId, did, 'session')
   session = await reconnect(pairing.value, device.value, onPending, creds)
   ready.value = session.ready
+  pairing.value.seq = session.link.seq
+  await savePairingsStore(pairings.value, pairing.value)
   state.value = 'connected'
   message.value = `已连接到 ${pairing.value.name}`
   log('重连成功')
@@ -394,6 +397,8 @@ async function autoReconnect() {
         const creds = await credentialsFor(pairing.value.hostId, did, 'session')
         session = await reconnect(pairing.value, device.value, onPending, creds)
         ready.value = session.ready
+        pairing.value.seq = session.link.seq
+        await savePairingsStore(pairings.value, pairing.value)
         attachClose()
         state.value = 'connected'
         message.value = `已重新连接 ${pairing.value.name}`

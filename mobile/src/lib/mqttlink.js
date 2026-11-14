@@ -46,14 +46,14 @@ export async function connectMQTT({ url, username, password, clientId, willTopic
 }
 
 export class MQTTLink {
-  constructor({ client, topics, mode, contentKey, hostID, deviceID, onClose }) {
+  constructor({ client, topics, mode, contentKey, hostID, deviceID, onClose, startSeq }) {
     this.client = client
     this.topics = topics
     this.mode = mode
     this.key = parseKey(contentKey)
     this.hostID = hostID
     this.deviceID = deviceID
-    this.seq = 0
+    this.seq = startSeq || 0
     this.queue = []
     this.waiters = []
     this.closed = false
@@ -72,14 +72,16 @@ export class MQTTLink {
       clientId: opts.deviceID,
     })
     const link = new MQTTLink({ ...opts, client })
-    const filters = opts.mode === 'pair' ? [opts.topics.pair] : [opts.topics.evt, opts.topics.status]
+    const filters = opts.mode === 'pair'
+      ? [opts.topics.pair]
+      : [opts.topics.evt, opts.topics.status, opts.topics.pair]
     await client.subscribeAsync(filters, { qos: 1 })
     return link
   }
 
   async switchToSession() {
     this.mode = 'session'
-    await this.client.subscribeAsync([this.topics.evt, this.topics.status], { qos: 1 })
+    await this.client.subscribeAsync([this.topics.evt, this.topics.status, this.topics.pair], { qos: 1 })
   }
 
   onMessage(payload) {
