@@ -53,7 +53,7 @@ func (h *Host) Run(ctx context.Context, tr Transport, ts TopicSet) error {
 		h.seqs = map[string]uint64{}
 	}
 	if h.attachments == nil {
-		h.attachments = newAttachmentStore(h.attachDir)
+		h.attachments = newAttachmentStore(h.AttachDir)
 	}
 	h.mu.Unlock()
 

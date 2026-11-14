@@ -43,7 +43,7 @@ type Host struct {
 	devices map[string]*deviceState    // 设备ID → MQTT 状态
 	seqs    map[string]uint64          // 设备ID → 电脑发出消息的序号
 
-	attachDir   string
+	AttachDir   string
 	attachments *attachmentStore
 }
 
