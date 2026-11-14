@@ -406,6 +406,7 @@ export default {
     needLogin: 'Sign in before using the official relay',
     broker: 'Broker address',
     brokerHint: 'Official defaults to wss://agent-sync.yirenzaowusuo.cn/mqtt; self-hosted accepts wss:// or ws://.',
+    selfhostBrokerHint: 'Self-hosted mode only supports Mosquitto 2.x with a WebSocket listener: use ws://host:8083/mqtt or wss://domain/mqtt. See docs/DEPLOY-MOSQUITTO.md in the agent-sync-auth repo for steps and a ready-to-use AI prompt.',
     username: 'Username',
     usernameHint: 'MQTT username for your own broker; leave empty for anonymous.',
     password: 'Password',

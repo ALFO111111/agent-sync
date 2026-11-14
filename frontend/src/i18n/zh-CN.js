@@ -405,6 +405,7 @@ export default {
     needLogin: '官方模式需要先登录账号',
     broker: 'Broker 地址',
     brokerHint: '官方模式默认 wss://agent-sync.yirenzaowusuo.cn/mqtt；自建可填 wss:// 或 ws://。',
+    selfhostBrokerHint: '自建目前只支持 Mosquitto 2.x，并且必须开启 WebSocket 监听：地址填 ws://主机:8083/mqtt 或 wss://域名/mqtt。部署步骤和可直接发给 AI 的提示词见 agent-sync-auth 仓库 docs/DEPLOY-MOSQUITTO.md。',
     username: '用户名',
     usernameHint: '自建 Broker 的 MQTT 用户名，匿名可不填。',
     password: '密码',

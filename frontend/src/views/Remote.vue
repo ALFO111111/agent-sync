@@ -53,6 +53,7 @@
             <label>{{ t('remote.broker') }}</label>
             <input v-model.trim="form.broker" placeholder="wss://agent-sync.yirenzaowusuo.cn/mqtt" :disabled="form.mode === 'official'" />
             <div class="hint">{{ t('remote.brokerHint') }}</div>
+            <div v-if="form.mode === 'selfhost'" class="hint">{{ t('remote.selfhostBrokerHint') }}</div>
           </div>
           <template v-if="form.mode === 'official'">
             <div v-if="!auth.loggedIn" class="form-row wide">
