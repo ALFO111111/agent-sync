@@ -20,6 +20,7 @@ import {
   reconnect,
 } from './lib/protocol.js'
 import { secureGet, secureRemove, secureSet, storageIsSecure } from './lib/storage.js'
+import { login as authLogin, register as authRegister, mqttToken, passwordValid, usernameValid } from './lib/auth.js'
 import { hostKey, pickActive, upsertPairing } from './lib/pairings.js'
 
 const state = ref('idle')
@@ -32,7 +33,9 @@ const echoText = ref('hello')
 const device = ref(null)
 const pairing = ref(null)
 const pairings = ref([])
-const conn = ref({ url: 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: '', password: '' })
+const conn = ref({ mode: 'selfhost', url: 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: '', password: '' })
+const auth = ref({ accountId: '', sessionToken: '', username: '', password: '', mode: 'login' })
+const authBusy = ref(false)
 const ready = ref(null)
 const devices = ref([])
 const busy = ref(false)
@@ -246,23 +249,84 @@ async function saveConn() {
   log('MQTT 连接设置已保存')
 }
 
+async function saveAuth() {
+  await secureSet('authSession', JSON.stringify({
+    accountId: auth.value.accountId,
+    sessionToken: auth.value.sessionToken,
+    username: auth.value.username,
+  }))
+}
+
+async function loadAuth() {
+  try {
+    const raw = await secureGet('authSession')
+    if (raw) Object.assign(auth.value, JSON.parse(raw))
+  } catch {
+    // 忽略损坏的登录状态
+  }
+}
+
+async function submitAuth() {
+  if (!usernameValid(auth.value.username)) throw new Error('用户名 3–32 位，只允许字母数字和 _.-')
+  if (!passwordValid(auth.value.password)) throw new Error('密码至少 10 位')
+  const out = auth.value.mode === 'register'
+    ? await authRegister(auth.value.username, auth.value.password)
+    : await authLogin(auth.value.username, auth.value.password)
+  auth.value.accountId = out.accountId
+  auth.value.sessionToken = out.sessionToken
+  auth.value.password = ''
+  await saveAuth()
+  message.value = auth.value.mode === 'register' ? '注册成功' : '登录成功'
+  log(message.value)
+}
+
+async function submitAuthWrap() {
+  authBusy.value = true
+  try {
+    await submitAuth()
+  } catch (err) {
+    message.value = err.message || String(err)
+    log(message.value)
+  } finally {
+    authBusy.value = false
+  }
+}
+
+async function credentialsFor(hostId, did, scope) {
+  if (conn.value.mode !== 'official') {
+    return { url: conn.value.url, username: conn.value.username, password: conn.value.password }
+  }
+  if (!auth.value.sessionToken) throw new Error('请先登录官方账号')
+  const t = await mqttToken(auth.value.sessionToken, did, hostId, 'phone', scope)
+  return { url: conn.value.url || 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: t.username, password: t.password }
+}
+
 async function doPair(invitation) {
   if (!invitation?.hostId || !invitation?.contentKey) throw new Error('邀请格式不对')
   state.value = 'connecting'
   message.value = '正在连接 Broker…'
-  session = await pair(invitation, device.value, deviceName.value, onPending, conn.value)
+  const did = fingerprint(device.value.publicKey)
+  const creds = await credentialsFor(invitation.hostId, did, 'pair')
+  session = await pair(invitation, device.value, deviceName.value, onPending, creds)
   ready.value = session.ready
   const entry = {
     hostId: invitation.hostId || session.ready.hostId || '',
     uid: invitation.uid || 'local',
     broker: conn.value.url || invitation.url,
     name: session.ready.hostName || '电脑',
-    deviceId: session.ready.deviceId || fingerprint(device.value.publicKey),
+    deviceId: did,
     e2eeKey: invitation.contentKey,
   }
   pairings.value = upsertPairing(pairings.value, entry)
   pairing.value = entry
   await savePairingsStore(pairings.value, entry)
+  if (conn.value.mode === 'official') {
+    // 配对 token 只能访问 pair 主题；换正式 token 重新连接。
+    session.close()
+    await doReconnect()
+    return
+  }
+  await session.link.switchToSession()
   state.value = 'connected'
   message.value = `已连接到 ${pairing.value.name}`
   log('配对成功，已保存设备授权')
@@ -276,7 +340,9 @@ async function doReconnect() {
   if (!pairing.value) return
   state.value = 'connecting'
   message.value = '正在重连…'
-  session = await reconnect(pairing.value, device.value, onPending, conn.value)
+  const did = pairing.value.deviceId || fingerprint(device.value.publicKey)
+  const creds = await credentialsFor(pairing.value.hostId, did, 'session')
+  session = await reconnect(pairing.value, device.value, onPending, creds)
   ready.value = session.ready
   state.value = 'connected'
   message.value = `已连接到 ${pairing.value.name}`
@@ -324,7 +390,9 @@ async function autoReconnect() {
       if (attempt > 0) await new Promise(r => setTimeout(r, Math.min(30000, 1000 * 2 ** attempt)))
       state.value = 'reconnecting'
       try {
-        session = await reconnect(pairing.value, device.value, onPending, conn.value)
+        const did = pairing.value.deviceId || fingerprint(device.value.publicKey)
+        const creds = await credentialsFor(pairing.value.hostId, did, 'session')
+        session = await reconnect(pairing.value, device.value, onPending, creds)
         ready.value = session.ready
         attachClose()
         state.value = 'connected'
@@ -793,6 +861,7 @@ onMounted(async () => {
     try {
       const rawConn = await secureGet('mqttConn')
       if (rawConn) conn.value = { ...conn.value, ...JSON.parse(rawConn) }
+      await loadAuth()
     } catch {
       // 配置损坏时用默认值
     }
@@ -1291,20 +1360,52 @@ async function pickGallery() {
           </div>
         </div>
 
-        <div class="section-title">MQTT 连接</div>
+        <div class="section-title">连接方式</div>
         <div class="card">
-          <div class="setting-col">
-            <label>Broker 地址</label>
-            <input v-model.trim="conn.url" placeholder="wss://agent-sync.yirenzaowusuo.cn/mqtt" />
+          <div class="setting-row">
+            <span>模式</span>
+            <div class="segmented small">
+              <button :class="{ on: conn.mode === 'official' }" @click="conn.mode = 'official'">官方</button>
+              <button :class="{ on: conn.mode === 'selfhost' }" @click="conn.mode = 'selfhost'">自建</button>
+            </div>
           </div>
-          <div class="setting-col">
-            <label>用户名（自建）</label>
-            <input v-model.trim="conn.username" autocomplete="username" />
-          </div>
-          <div class="setting-col">
-            <label>密码（自建）</label>
-            <input v-model="conn.password" type="password" autocomplete="current-password" />
-          </div>
+
+          <template v-if="conn.mode === 'official'">
+            <div class="setting-col">
+              <label>账号</label>
+              <div class="row wrap">
+                <button class="pill" :class="{ on: auth.mode === 'login' }" @click="auth.mode = 'login'">登录</button>
+                <button class="pill" :class="{ on: auth.mode === 'register' }" @click="auth.mode = 'register'">注册</button>
+                <span v-if="auth.accountId" class="muted small">已登录 {{ auth.accountId.slice(0, 8) }}</span>
+              </div>
+            </div>
+            <div class="setting-col">
+              <label>用户名</label>
+              <input v-model.trim="auth.username" autocomplete="username" placeholder="3–32 位字母数字和 _.-" />
+            </div>
+            <div class="setting-col">
+              <label>密码</label>
+              <input v-model="auth.password" type="password" autocomplete="current-password" placeholder="至少 10 位" />
+            </div>
+            <button class="pill" :disabled="authBusy" @click="submitAuthWrap">
+              {{ auth.mode === 'login' ? '登录' : '注册' }}
+            </button>
+          </template>
+
+          <template v-else>
+            <div class="setting-col">
+              <label>Broker 地址</label>
+              <input v-model.trim="conn.url" placeholder="wss://agent-sync.yirenzaowusuo.cn/mqtt" />
+            </div>
+            <div class="setting-col">
+              <label>用户名</label>
+              <input v-model.trim="conn.username" autocomplete="username" />
+            </div>
+            <div class="setting-col">
+              <label>密码</label>
+              <input v-model="conn.password" type="password" autocomplete="current-password" />
+            </div>
+          </template>
           <button class="pill" @click="saveConn">保存连接设置</button>
         </div>
 

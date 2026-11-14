@@ -359,9 +359,7 @@ export async function pair(invitation, device, name, onPending, conn = {}) {
     deviceID: did,
   })
   try {
-    const session = await connect(link, device, name, invitation, onPending)
-    await link.switchToSession()
-    return session
+    return connect(link, device, name, invitation, onPending)
   } catch (err) {
     link.close()
     throw err
