@@ -42,6 +42,10 @@ type State struct {
 	Credential string   `json:"credential"`
 	ContentKey string   `json:"contentKey,omitempty"` // 手机与电脑共用的内容加密密钥（base64）
 	Devices    []Device `json:"devices"`
+
+	// 官方模式登录后写入；自建模式保持为空。
+	AccountID    string `json:"accountId,omitempty"`
+	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
 // Store 负责状态的持久化（cmd 层实现加密文件）。

@@ -64,13 +64,24 @@ func run(args []string) int {
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
-		relayURL := fs.String("relay", "", "relay URL used by this host to dial")
-		publicURL := fs.String("public", "", "wss relay URL written into invitations")
+		broker := fs.String("broker", "", "MQTT broker URL, e.g. wss://agent-sync.yirenzaowusuo.cn/mqtt")
+		mode := fs.String("mode", "selfhost", "official or selfhost")
+		user := fs.String("user", "", "selfhost MQTT username")
+		pass := fs.String("pass", "", "selfhost MQTT password")
+		relayURL := fs.String("relay", "", "deprecated: use -broker")
+		_ = fs.String("public", "", "deprecated and ignored")
 		name := fs.String("name", "", "host display name")
 		claudeBin := fs.String("claude-bin", "", "path to the claude cli (auto-detected when empty)")
 		dir := fs.String("state", defaultStateDir(), "state directory")
 		lang := fs.String("lang", "zh-CN", "zh-CN / en")
-		if err := fs.Parse(rest); err != nil || *relayURL == "" {
+		if err := fs.Parse(rest); err != nil {
+			usage()
+			return 2
+		}
+		if *broker == "" {
+			*broker = *relayURL
+		}
+		if *broker == "" || (*mode != "official" && *mode != "selfhost") {
 			usage()
 			return 2
 		}
@@ -79,13 +90,9 @@ func run(args []string) int {
 		if hostName == "" {
 			hostName, _ = os.Hostname()
 		}
-		public := *publicURL
-		if public == "" {
-			public = *relayURL
-		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if err := runDaemon(ctx, *dir, *relayURL, public, hostName, *claudeBin); err != nil {
+		if err := runDaemon(ctx, *dir, *broker, *mode, *user, *pass, hostName, *claudeBin); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.T("命令失败：%s", err))
 			return 1
 		}
@@ -133,7 +140,7 @@ func run(args []string) int {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host version")
-	fmt.Fprintln(os.Stderr, "  agent-sync-host run -relay ws://127.0.0.1:18765/ws -public wss://host/ws [-name NAME] [-state DIR] [-lang zh-CN|en]")
+	fmt.Fprintln(os.Stderr, "  agent-sync-host run -broker wss://host/mqtt [-mode official|selfhost] [-user U -pass P] [-name NAME] [-state DIR] [-lang zh-CN|en]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host invite|pending|devices|status|quit [-state DIR]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host approve|deny <requestID> [-state DIR]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host revoke <deviceID|fingerprint> [-state DIR]")

@@ -10,6 +10,7 @@ import (
 
 	"github.com/ALFO111111/agent-sync/internal/fsutil"
 	"github.com/ALFO111111/agent-sync/internal/i18n"
+	"github.com/ALFO111111/agent-sync/internal/mqttlink"
 	"github.com/ALFO111111/agent-sync/internal/remotev1"
 )
 
@@ -17,7 +18,8 @@ type daemon struct {
 	auth         *remotev1.Authority
 	host         *remotev1.Host
 	hostName     string
-	relayURL     string
+	broker       string
+	mode         string
 	controlToken string
 	sessions     *sessionService
 	cancel       context.CancelFunc
@@ -29,9 +31,8 @@ func (d *daemon) stop() {
 	}
 }
 
-// runDaemon 常驻：加载身份 → 登记中转 → 处理连接；断开自动退避重连。
-func runDaemon(ctx context.Context, dir, dialURL, publicURL, hostName, claudeBin string) (result error) {
-	// 身份文件读取之前锁住整个生命周期，清理完成后才释放。
+// runDaemon 常驻：加载身份 → 连接 MQTT → 处理消息；断开自动退避重连。
+func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostName, claudeBin string) (result error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -48,7 +49,6 @@ func runDaemon(ctx context.Context, dir, dialURL, publicURL, hostName, claudeBin
 		return errors.New("remote host is already starting or running")
 	}
 	defer fsutil.UnlockFile(lock)
-	// 旧版没有生命周期锁；控制通道仍可用时也不能启动第二份。
 	if resp, err := sendControl(dir, ctlRequest{Cmd: "status"}); err == nil && resp.OK {
 		return errors.New("remote host is already running")
 	}
@@ -61,21 +61,30 @@ func runDaemon(ctx context.Context, dir, dialURL, publicURL, hostName, claudeBin
 	if err != nil {
 		return err
 	}
-	auth, err := remotev1.NewAuthority(store, publicURL)
+	auth, err := remotev1.NewAuthority(store, broker)
 	if err != nil {
 		return err
 	}
 	state := auth.State()
-	hostID, err := remotev1.IdentityFromBase64(state.PrivateKey)
-	if err != nil {
-		return err
+	uid := "local"
+	if mode == "official" {
+		uid = state.AccountID
+		if uid == "" {
+			return errors.New("official mode requires account login")
+		}
+		if state.RefreshToken == "" {
+			return errors.New("official mode requires refresh token")
+		}
 	}
+	topics := remotev1.TopicSet{UID: uid, HID: state.HostID, DID: state.HostID}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "%s %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 	}
-	host := remotev1.NewHost(hostID, auth, dialURL, hostName, logf)
+
+	host := &remotev1.Host{Authority: auth, Name: hostName, Logf: logf, AttachDir: dir}
 	extraPath := []string{}
 	if home, err := os.UserHomeDir(); err == nil {
 		extraPath = append(extraPath, filepath.Join(home, "sdk", "node", "bin"))
@@ -90,7 +99,8 @@ func runDaemon(ctx context.Context, dir, dialURL, publicURL, hostName, claudeBin
 	} else {
 		fmt.Fprintf(os.Stderr, "sessions disabled: %v\n", err)
 	}
-	d := &daemon{auth: auth, host: host, hostName: hostName, relayURL: publicURL, controlToken: remotev1.RandomToken(16), sessions: svc, cancel: cancel}
+
+	d := &daemon{auth: auth, host: host, hostName: hostName, broker: broker, mode: mode, controlToken: remotev1.RandomToken(16), sessions: svc, cancel: cancel}
 
 	controlErr := make(chan error, 1)
 	go func() {
@@ -105,19 +115,37 @@ func runDaemon(ctx context.Context, dir, dialURL, publicURL, hostName, claudeBin
 		}
 	}()
 
+	var token mqttlink.TokenProvider
+	if mode == "official" {
+		token = &mqttlink.HTTPTokenProvider{
+			BaseURL:      "https://agent-sync.yirenzaowusuo.cn/api",
+			RefreshToken: state.RefreshToken,
+			DeviceID:     state.HostID,
+			HostID:       state.HostID,
+		}
+	} else {
+		token = mqttlink.StaticToken{Username: username, Password: password}
+	}
+
 	backoff := time.Second
 	for ctx.Err() == nil {
-		err := host.Serve(ctx, func() {
-			fmt.Fprintln(os.Stderr, i18n.T("主机守护已启动（%s）", publicURL))
-			backoff = time.Second
+		tr, err := mqttlink.New(mqttlink.Config{
+			URL:         broker,
+			ClientID:    state.HostID,
+			Token:       token,
+			WillTopic:   topics.Status(),
+			WillPayload: []byte(`{"online":false}`),
 		})
+		if err == nil {
+			err = host.Run(ctx, tr, topics)
+			tr.Close()
+		}
 		if ctx.Err() != nil {
 			break
 		}
 		if err != nil {
-			// 错误只用于本机日志：可能含中转地址，不含配对秘密。
-			fmt.Fprintf(os.Stderr, "relay error: %v\n", err)
-			fmt.Fprintln(os.Stderr, i18n.T("正在重连中转（%s）", backoff.String()))
+			fmt.Fprintf(os.Stderr, "mqtt error: %v\n", err)
+			fmt.Fprintln(os.Stderr, i18n.T("正在重连 MQTT（%s）", backoff.String()))
 		}
 		select {
 		case <-ctx.Done():

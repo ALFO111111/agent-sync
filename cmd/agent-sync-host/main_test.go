@@ -49,7 +49,7 @@ func TestLifecycleLockBeforeIdentity(t *testing.T) {
 		t.Fatalf("lock: %v %v", ok, err)
 	}
 	defer fsutil.UnlockFile(f)
-	if err := runDaemon(context.Background(), dir, "ws://127.0.0.1:1/ws", "ws://127.0.0.1:1/ws", "test", "missing"); err == nil {
+	if err := runDaemon(context.Background(), dir, "wss://example/mqtt", "selfhost", "", "", "test", "missing"); err == nil {
 		t.Fatal("duplicate daemon accepted")
 	}
 	entries, err := os.ReadDir(dir)
@@ -70,7 +70,7 @@ func TestStatusIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := daemon{auth: auth, hostName: "test", relayURL: "ws://127.0.0.1:1/ws"}
+	d := daemon{auth: auth, hostName: "test", broker: "wss://example/mqtt", mode: "selfhost"}
 	got := d.handle(ctlRequest{Cmd: "status"})
 	if !got.OK || got.Version != version || got.BuildID != buildID || got.PID != os.Getpid() {
 		t.Fatalf("status: %+v", got)

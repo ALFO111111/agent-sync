@@ -44,6 +44,8 @@ type ctlResponse struct {
 	HostID     string                `json:"hostId,omitempty"`
 	HostName   string                `json:"hostName,omitempty"`
 	Relay      string                `json:"relay,omitempty"`
+	Broker     string                `json:"broker,omitempty"`
+	Mode       string                `json:"mode,omitempty"`
 	Version    string                `json:"version,omitempty"`
 	BuildID    string                `json:"buildID,omitempty"`
 	PID        int                   `json:"pid,omitempty"`
@@ -182,7 +184,7 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 		return ctlResponse{OK: true}
 	case "status":
 		st := d.auth.State()
-		return ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Relay: d.relayURL, Version: version, BuildID: buildID, PID: os.Getpid()}
+		return ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Relay: d.broker, Broker: d.broker, Mode: d.mode, Version: version, BuildID: buildID, PID: os.Getpid()}
 	case "rotate-key":
 		if err := d.host.RotateContentKey(); err != nil {
 			return ctlResponse{Error: err.Error()}
