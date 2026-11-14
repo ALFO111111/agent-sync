@@ -1,6 +1,6 @@
 # 手机遥控 MQTT 部署指南
 
-本文对应 0.7.0 起的 MQTT 遥控。旧 WebSocket relay 在验收后删除。
+本文对应 0.7.0 起的 MQTT 遥控。旧 WebSocket relay 已删除。
 
 ## 端口
 
@@ -121,7 +121,7 @@ localPort = 8083
 remotePort = 18083
 ```
 
-保留原有 `xlkd-web` 和 `object-store`，暂时保留 `agent-sync-relay` 以便回滚。
+保留原有 `xlkd-web` 和 `object-store`；旧的 `agent-sync-relay` 代理已删除。
 重启 frpc：
 
 ```bash
@@ -180,4 +180,13 @@ docker run -d --name mqtt-selfhost -p 1883:1883 \
 - nginx：恢复备份的 server 块，`systemctl reload nginx`；
 - frps：恢复 `/etc/frp/frps.toml.bak-*`，重启 frps；
 - Mac：恢复 `~/.frpc.toml` 和 Mosquitto 配置，重启对应 LaunchAgent；
-- 旧 relay 在 M3 验收前不要删除。
+- 旧 relay 已删除；如需回滚，从 git 历史恢复旧版本并重新部署。
+
+## 验收记录（2026-11-14）
+
+- Mosquitto 2.1.2 + `mosquitto-go-auth` 编译并启动，未授权连接被拒绝。
+- ECS nginx `/mqtt`、frp 18083、公网 `wss://agent-sync.yirenzaowusuo.cn/mqtt` 握手返回 101。
+- 自建模式：Windows host 连接局域网 Mosquitto，`u/local/h/{hostId}/status` 收到 `{"online":true}`。
+- 手机协议模拟（Node + mqtt.js）：配对 → 电脑批准 → ready → echo → 附件上传全部通过。
+- 旧部署已清理：Mac relay 进程/LaunchAgent、frpc `agent-sync-relay` 代理、frps 18765、nginx `/ws` 全部移除。
+- 官方模式待 token 服务 P0 上线后验收；当前只能验证鉴权链路本身（临时 200 服务放行、撤销后拒绝）。

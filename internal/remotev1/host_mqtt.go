@@ -119,6 +119,8 @@ func (h *Host) onMessage(ctx context.Context, tr Transport, ts TopicSet, topic s
 
 func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, did, kind string, env Envelope) {
 	hostID := h.Authority.State().HostID
+	dts := ts
+	dts.DID = did
 	h.mu.Lock()
 	st := h.devices[did]
 	if st == nil {
@@ -132,7 +134,7 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 	switch env.Type {
 	case "hello":
 		if _, err := ParsePublic(env.DevicePub); err != nil {
-			_ = h.reply(tr, ts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "identity"}, 1)
+			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "identity"}, 1)
 			return
 		}
 		st.nonce = RandomNonce()
@@ -146,32 +148,32 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 				st.historyPaged = true
 			}
 		}
-		_ = h.reply(tr, ts.Pair(), hostID, h.nextSeq(did), Envelope{
+		_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{
 			Type: "challenge", Nonce: st.nonce, HostID: hostID, HostName: h.Name,
 		}, 1)
 
 	case "proof":
 		pub, err := ParsePublic(st.pub)
 		if err != nil || !VerifyProof(pub, st.nonce, st.pub, env.InviteID, env.Signature) {
-			_ = h.reply(tr, ts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "proof"}, 1)
+			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "proof"}, 1)
 			return
 		}
 		device, known := h.Authority.Device(st.pub)
 		if known {
 			if device.Revoked {
-				_ = h.reply(tr, ts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "revoked"}, 1)
+				_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "revoked"}, 1)
 				return
 			}
 			st.device = device
-			_ = h.reply(tr, ts.Pair(), hostID, h.nextSeq(did), h.readyEnvelope(device.ID), 1)
+			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), h.readyEnvelope(device.ID), 1)
 			return
 		}
 		p, err := h.Authority.BeginPair(st.inviteID, st.inviteSecret, st.pub, st.name)
 		if err != nil {
-			_ = h.reply(tr, ts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "invitation"}, 1)
+			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "invitation"}, 1)
 			return
 		}
-		_ = h.reply(tr, ts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "pending", ID: p.ID}, 1)
+		_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "pending", ID: p.ID}, 1)
 		go func() {
 			approved := <-p.Result
 			st.mu.Lock()
@@ -179,11 +181,11 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 			if approved {
 				if d, ok := h.Authority.Device(st.pub); ok {
 					st.device = d
-					_ = h.reply(tr, ts.Pair(), hostID, h.nextSeq(did), h.readyEnvelope(d.ID), 1)
+					_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), h.readyEnvelope(d.ID), 1)
 					return
 				}
 			}
-			_ = h.reply(tr, ts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "approval"}, 1)
+			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "approval"}, 1)
 		}()
 
 	default:
