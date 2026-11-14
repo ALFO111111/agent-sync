@@ -20,8 +20,9 @@ func TestRemoteConfigRoundTrip(t *testing.T) {
 	testutil.NewDevice(t, "remote-test")
 
 	in := RemoteConfig{
-		Relay:     " wss://relay.example.com/ws ",
-		Public:    " wss://relay.example.com/ws ",
+		Mode:      "selfhost",
+		Broker:    " wss://relay.example.com/mqtt ",
+		Username:  " user ",
 		Name:      " 我的电脑 ",
 		ClaudeBin: ` D:\tools\claude.cmd `,
 		Proxy:     " http://127.0.0.1:7890 ",
@@ -34,7 +35,7 @@ func TestRemoteConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Relay != "https://relay.example.com" || got.Public != "https://relay.example.com" ||
+	if got.Mode != "selfhost" || got.Broker != "https://relay.example.com/mqtt" || got.Username != "user" ||
 		got.Name != "我的电脑" || got.ClaudeBin != `D:\tools\claude.cmd` || got.Proxy != "http://127.0.0.1:7890" {
 		t.Fatalf("保存后读回不一致: %+v", got)
 	}
@@ -151,13 +152,7 @@ func TestRemoteLifecycleIntegration(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 	dir := t.TempDir()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	relay := "ws://" + ln.Addr().String() + "/ws"
-	ln.Close()
-	cfg := &config.Config{RemoteBin: bin, RemoteRelay: relay, RemotePublic: relay, RemoteClaudeBin: "missing-test-cli"}
+	cfg := &config.Config{RemoteBin: bin, RemoteMode: "selfhost", RemoteBroker: "tcp://127.0.0.1:1", RemoteClaudeBin: "missing-test-cli"}
 	t.Cleanup(func() {
 		if err := remoteStopAt(dir, 10*time.Second); err != nil {
 			t.Errorf("cleanup: %v", err)
@@ -212,6 +207,29 @@ func TestNormalizeRelayURL(t *testing.T) {
 		t.Fatal("ftp accepted")
 	}
 	if DisplayRelayURL("wss://relay.example.com/ws") != "https://relay.example.com" {
+		t.Fatal("display")
+	}
+}
+
+func TestNormalizeBrokerURL(t *testing.T) {
+	cases := map[string]string{
+		"https://broker.example.com":        "wss://broker.example.com/mqtt",
+		"https://broker.example.com/":       "wss://broker.example.com/mqtt",
+		"http://127.0.0.1:8083":             "ws://127.0.0.1:8083/mqtt",
+		"wss://broker.example.com/mqtt":     "wss://broker.example.com/mqtt",
+		"broker.example.com":                "wss://broker.example.com/mqtt",
+		"https://broker.example.com/custom": "wss://broker.example.com/custom",
+	}
+	for in, want := range cases {
+		got, err := NormalizeBrokerURL(in)
+		if err != nil || got != want {
+			t.Errorf("%q -> %q (%v), want %q", in, got, err, want)
+		}
+	}
+	if _, err := NormalizeBrokerURL("ftp://x"); err == nil {
+		t.Fatal("ftp accepted")
+	}
+	if DisplayBrokerURL("wss://broker.example.com/mqtt") != "https://broker.example.com/mqtt" {
 		t.Fatal("display")
 	}
 }

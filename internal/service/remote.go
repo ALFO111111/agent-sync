@@ -37,6 +37,8 @@ type RemoteStatus struct {
 	HostID         string          `json:"hostId,omitempty"`
 	HostName       string          `json:"hostName,omitempty"`
 	Relay          string          `json:"relay,omitempty"`
+	Broker         string          `json:"broker,omitempty"`
+	Mode           string          `json:"mode,omitempty"`
 	Pending        []RemotePending `json:"pending,omitempty"`
 	Devices        []RemoteDevice  `json:"devices,omitempty"`
 	Active         []RemoteActive  `json:"active,omitempty"`
@@ -70,13 +72,33 @@ type RemoteActive struct {
 }
 
 // RemoteConfig 是“手机遥控”的设置项（存在 config.json 里）。
+// Password 只在本次启动时经控制通道传给 host，不写入配置文件。
 type RemoteConfig struct {
-	Relay     string `json:"relay"`     // 主机连接的中转地址，例如 wss://agent-sync.example.com/ws
-	Public    string `json:"public"`    // 写给手机的公网地址
+	Mode      string `json:"mode"`      // official / selfhost
+	Broker    string `json:"broker"`    // MQTT Broker，例如 wss://agent-sync.example.com/mqtt
+	Username  string `json:"username"`  // 自建模式用户名
+	Password  string `json:"password,omitempty"`
 	Name      string `json:"name"`      // 电脑显示名
 	ClaudeBin string `json:"claudeBin"` // claude 可执行文件（空=自动）
 	Bin       string `json:"bin"`       // agent-sync-host 可执行文件（空=自动）
 	Proxy     string `json:"proxy"`     // 启动主机组件时用的 HTTP(S) 代理（空=继承当前环境）
+}
+
+var (
+	remoteCredMu sync.Mutex
+	remotePass   string
+)
+
+func setRemotePassword(p string) {
+	remoteCredMu.Lock()
+	remotePass = p
+	remoteCredMu.Unlock()
+}
+
+func getRemotePassword() string {
+	remoteCredMu.Lock()
+	defer remoteCredMu.Unlock()
+	return remotePass
 }
 
 // RemoteDir 是主机组件的状态目录（与 agent-sync-host 一致）。
@@ -111,6 +133,8 @@ type remoteResponse struct {
 	HostID     string          `json:"hostId,omitempty"`
 	HostName   string          `json:"hostName,omitempty"`
 	Relay      string          `json:"relay,omitempty"`
+	Broker     string          `json:"broker,omitempty"`
+	Mode       string          `json:"mode,omitempty"`
 	Version    string          `json:"version,omitempty"`
 	BuildID    string          `json:"buildID,omitempty"`
 	PID        int             `json:"pid,omitempty"`
@@ -223,6 +247,11 @@ func GetRemoteStatus(cfg *config.Config) RemoteStatus {
 	st.HostID = resp.HostID
 	st.HostName = resp.HostName
 	st.Relay = resp.Relay
+	st.Broker = resp.Broker
+	if st.Broker == "" {
+		st.Broker = resp.Relay
+	}
+	st.Mode = resp.Mode
 	if list, err := remoteCall(dir, "pending", 5*time.Second); err == nil {
 		st.Pending = list.Pending
 		for i := range st.Pending {
@@ -247,9 +276,18 @@ func GetRemoteConfig() (*RemoteConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	mode := cfg.RemoteMode
+	if mode == "" {
+		mode = "selfhost"
+	}
+	broker := DisplayBrokerURL(cfg.RemoteBroker)
+	if broker == "" {
+		broker = DisplayRelayURL(cfg.RemoteRelay)
+	}
 	return &RemoteConfig{
-		Relay:     DisplayRelayURL(cfg.RemoteRelay),
-		Public:    DisplayRelayURL(cfg.RemotePublic),
+		Mode:      mode,
+		Broker:    broker,
+		Username:  cfg.RemoteUsername,
 		Name:      cfg.RemoteName,
 		ClaudeBin: cfg.RemoteClaudeBin,
 		Bin:       cfg.RemoteBin,
@@ -263,19 +301,18 @@ func SaveRemoteConfig(rc RemoteConfig) error {
 	if err != nil {
 		return err
 	}
-	relay, err := NormalizeRelayURL(rc.Relay)
+	mode := strings.TrimSpace(rc.Mode)
+	if mode != "official" && mode != "selfhost" {
+		mode = "selfhost"
+	}
+	broker, err := NormalizeBrokerURL(rc.Broker)
 	if err != nil {
 		return err
 	}
-	public, err := NormalizeRelayURL(rc.Public)
-	if err != nil {
-		return err
-	}
-	if public == "" {
-		public = relay
-	}
-	cfg.RemoteRelay = relay
-	cfg.RemotePublic = public
+	setRemotePassword(rc.Password)
+	cfg.RemoteMode = mode
+	cfg.RemoteBroker = broker
+	cfg.RemoteUsername = strings.TrimSpace(rc.Username)
 	cfg.RemoteName = strings.TrimSpace(rc.Name)
 	cfg.RemoteClaudeBin = strings.TrimSpace(rc.ClaudeBin)
 	cfg.RemoteProxy = strings.TrimSpace(rc.Proxy)
@@ -301,8 +338,19 @@ func remoteEnsureAt(cfg *config.Config, dir string) error {
 	if _, err := remoteCall(dir, "status", 5*time.Second); err == nil {
 		return nil // 旧主机保持运行，不自动中断会话。
 	}
-	if cfg.RemoteRelay == "" || cfg.RemotePublic == "" {
-		return errors.New("remote relay address is not configured")
+	mode := cfg.RemoteMode
+	if mode == "" {
+		mode = "selfhost"
+	}
+	broker := cfg.RemoteBroker
+	if broker == "" {
+		broker, _ = NormalizeRelayURL(cfg.RemoteRelay)
+	}
+	if broker == "" {
+		return errors.New("remote broker address is not configured")
+	}
+	if mode == "selfhost" && cfg.RemoteUsername != "" && getRemotePassword() == "" {
+		return errors.New("remote broker password is required")
 	}
 	bin := cfg.RemoteBin
 	if bin == "" && hostbundle.Available() {
@@ -340,7 +388,15 @@ func remoteEnsureAt(cfg *config.Config, dir string) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"run", "-relay", cfg.RemoteRelay, "-public", cfg.RemotePublic, "-state", dir, "-lang", i18n.Lang()}
+	args := []string{"run", "-broker", broker, "-mode", mode, "-state", dir, "-lang", i18n.Lang()}
+	if mode == "selfhost" {
+		if cfg.RemoteUsername != "" {
+			args = append(args, "-user", cfg.RemoteUsername)
+		}
+		if p := getRemotePassword(); p != "" {
+			args = append(args, "-pass", p)
+		}
+	}
 	if cfg.RemoteName != "" {
 		args = append(args, "-name", cfg.RemoteName)
 	}
@@ -613,6 +669,53 @@ func NormalizeRelayURL(raw string) (string, error) {
 		u.Path = "/ws"
 	}
 	return u.String(), nil
+}
+
+// NormalizeBrokerURL 规范化 MQTT Broker 地址；默认补 /mqtt。
+func NormalizeBrokerURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", i18n.Err("Broker 地址格式不对")
+	}
+	switch u.Scheme {
+	case "https":
+		u.Scheme = "wss"
+	case "http":
+		u.Scheme = "ws"
+	case "wss", "ws":
+	default:
+		return "", i18n.Err("Broker 地址只支持 http/https/ws/wss")
+	}
+	u.Fragment = ""
+	u.RawQuery = ""
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/mqtt"
+	}
+	return u.String(), nil
+}
+
+// DisplayBrokerURL 把 wss 地址显示成用户习惯的 https 形式。
+func DisplayBrokerURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	switch u.Scheme {
+	case "wss":
+		u.Scheme = "https"
+	case "ws":
+		u.Scheme = "http"
+	default:
+		return raw
+	}
+	return u.String()
 }
 
 // DisplayRelayURL 把配置里的 wss 地址显示成用户习惯的 https://host 形式。

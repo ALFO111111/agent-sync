@@ -20,7 +20,7 @@
       <template v-if="!editing">
         <div v-if="st.running" class="info-grid">
           <div><div class="k">{{ t('remote.hostName') }}</div><div class="v">{{ st.hostName || '—' }}</div></div>
-          <div><div class="k">{{ t('remote.relayAddr') }}</div><div class="v mono">{{ toDisplay(st.relay) || '—' }}</div></div>
+          <div><div class="k">{{ t('remote.brokerAddr') }}</div><div class="v mono">{{ st.broker || '—' }}</div></div>
           <div class="wide"><div class="k">{{ t('remote.hostId') }}</div><div class="v mono ellipsis">{{ st.hostId || '—' }}</div></div>
         </div>
         <div v-else-if="st.binPath" class="muted small mt">{{ t('remote.binFound', { path: st.binPath }) }}</div>
@@ -41,16 +41,31 @@
             <label>{{ t('remote.name') }}</label>
             <input v-model.trim="form.name" :placeholder="t('remote.nameHint')" />
           </div>
-          <div class="form-row wide">
-            <label>{{ t('remote.relay') }}</label>
-            <input v-model.trim="form.relay" placeholder="https://agent-sync.example.com" />
-            <div class="hint">{{ t('remote.relayHint') }}</div>
+          <div class="form-row">
+            <label>{{ t('remote.mode') }}</label>
+            <select v-model="form.mode">
+              <option value="official">{{ t('remote.modeOfficial') }}</option>
+              <option value="selfhost">{{ t('remote.modeSelfHost') }}</option>
+            </select>
+            <div class="hint">{{ t('remote.modeHint') }}</div>
           </div>
           <div class="form-row wide">
-            <label>{{ t('remote.public') }}</label>
-            <input v-model.trim="form.public" placeholder="https://agent-sync.example.com" />
-            <div class="hint">{{ t('remote.publicHint') }}</div>
+            <label>{{ t('remote.broker') }}</label>
+            <input v-model.trim="form.broker" placeholder="wss://agent-sync.yirenzaowusuo.cn/mqtt" :disabled="form.mode === 'official'" />
+            <div class="hint">{{ t('remote.brokerHint') }}</div>
           </div>
+          <template v-if="form.mode === 'selfhost'">
+            <div class="form-row">
+              <label>{{ t('remote.username') }}</label>
+              <input v-model.trim="form.username" autocomplete="username" />
+              <div class="hint">{{ t('remote.usernameHint') }}</div>
+            </div>
+            <div class="form-row">
+              <label>{{ t('remote.password') }}</label>
+              <input v-model="form.password" type="password" autocomplete="current-password" />
+              <div class="hint">{{ t('remote.passwordHint') }}</div>
+            </div>
+          </template>
           <div class="form-row">
             <label>{{ t('remote.proxy') }}</label>
             <input v-model.trim="form.proxy" placeholder="http://127.0.0.1:7890" />
@@ -184,7 +199,7 @@ const { t } = useI18n()
 const { notice, ok, fail } = useNotice()
 
 const st = ref({ running: false, pending: [], devices: [], active: [] })
-const form = ref({ relay: '', public: '', name: '', claudeBin: '', bin: '', proxy: '' })
+const form = ref({ mode: 'selfhost', broker: '', username: '', password: '', name: '', claudeBin: '', bin: '', proxy: '' })
 const busy = ref(false)
 const err = ref('')
 const saved = ref(false)
@@ -206,20 +221,6 @@ const modeLabel = (m) => (MODES[m] ? t(MODES[m]) : m || '—')
 const shortFP = (fp) => (fp && fp.length > 20 ? fp.slice(0, 10) + '…' + fp.slice(-8) : fp || '')
 const when = (iso) => fromNow(Date.parse(iso) || 0)
 
-// 配置里的 wss 地址在界面上显示成 https，方便填写。
-function toDisplay(raw) {
-  if (!raw) return ''
-  try {
-    const u = new URL(raw)
-    if (u.protocol === 'wss:') u.protocol = 'https:'
-    else if (u.protocol === 'ws:') u.protocol = 'http:'
-    if (u.pathname === '/ws') u.pathname = ''
-    return u.toString().replace(/\/$/, '')
-  } catch {
-    return raw
-  }
-}
-
 async function loadConfig() {
   try {
     form.value = await api.GetRemoteConfig()
@@ -233,8 +234,8 @@ async function refresh() {
     const next = await api.GetRemoteStatus()
     st.value = next
     if (next.running) {
-      if (!form.value.relay) form.value.relay = toDisplay(next.relay)
-      if (!form.value.public) form.value.public = toDisplay(next.relay)
+      if (!form.value.broker) form.value.broker = next.broker || ''
+      if (!form.value.mode) form.value.mode = next.mode || 'selfhost'
       if (!form.value.name) form.value.name = next.hostName || ''
     }
     if (!loaded) loaded = JSON.stringify(form.value)
@@ -256,7 +257,7 @@ function cancelEdit() {
 }
 
 async function start() {
-  if (!form.value.relay) {
+  if (!form.value.broker) {
     fail(t('remote.needConfig'))
     return
   }
@@ -373,7 +374,7 @@ async function saveConfig() {
   try {
     const before = JSON.parse(loaded || '{}')
     const wasRunning = st.value.running
-    const restart = wasRunning && ['relay', 'public', 'proxy'].some((k) => form.value[k] !== before[k])
+    const restart = wasRunning && ['mode', 'broker', 'username', 'password', 'proxy'].some((k) => form.value[k] !== before[k])
     await api.SaveRemoteConfig(form.value)
     loaded = JSON.stringify(form.value)
     saved.value = true

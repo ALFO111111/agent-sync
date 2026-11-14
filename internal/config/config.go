@@ -41,8 +41,11 @@ type Config struct {
 	CCSwitchEnabled bool            `json:"ccSwitchEnabled,omitempty"` // 上次明确的 Auto Sync 状态，用于发现关闭后重新开启
 
 	// 手机遥控（本地主机组件）
-	RemoteRelay     string `json:"remoteRelay,omitempty"`     // 主机连接的中转地址
-	RemotePublic    string `json:"remotePublic,omitempty"`    // 邀请里写给手机的公网地址
+	RemoteRelay     string `json:"remoteRelay,omitempty"`     // 旧版中转地址（迁移用）
+	RemotePublic    string `json:"remotePublic,omitempty"`    // 旧版公网地址（迁移用）
+	RemoteMode      string `json:"remoteMode,omitempty"`      // official / selfhost
+	RemoteBroker    string `json:"remoteBroker,omitempty"`    // MQTT Broker 地址
+	RemoteUsername  string `json:"remoteUsername,omitempty"`  // 自建模式用户名
 	RemoteName      string `json:"remoteName,omitempty"`      // 电脑显示名
 	RemoteClaudeBin string `json:"remoteClaudeBin,omitempty"` // claude 可执行文件（空=自动）
 	RemoteBin       string `json:"remoteBin,omitempty"`       // agent-sync-host 可执行文件（空=自动）
