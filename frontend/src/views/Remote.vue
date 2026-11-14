@@ -56,11 +56,17 @@
           </div>
           <template v-if="form.mode === 'official'">
             <div v-if="!auth.loggedIn" class="form-row wide">
-              <label>{{ t('remote.login') }}</label>
+              <label>{{ t('remote.accountForm') }}</label>
               <div class="row wrap">
-                <input v-model.trim="auth.email" type="email" autocomplete="username" placeholder="邮箱" />
-                <input v-model="auth.password" type="password" autocomplete="current-password" placeholder="密码" />
-                <button class="primary" :disabled="authBusy" @click="login">{{ t('remote.login') }}</button>
+                <button class="sm" :class="{ on: auth.mode === 'login' }" @click="auth.mode = 'login'">{{ t('remote.login') }}</button>
+                <button class="sm" :class="{ on: auth.mode === 'register' }" @click="auth.mode = 'register'">{{ t('remote.register') }}</button>
+              </div>
+              <div class="row wrap">
+                <input v-model.trim="auth.username" autocomplete="username" :placeholder="t('remote.username')" />
+                <input v-model="auth.password" type="password" autocomplete="current-password" :placeholder="t('remote.password')" />
+                <button class="primary" :disabled="authBusy" @click="submitAuth">
+                  {{ auth.mode === 'login' ? t('remote.login') : t('remote.register') }}
+                </button>
               </div>
               <div class="hint">{{ t('remote.loginHint') }}</div>
             </div>
@@ -218,7 +224,7 @@ const { notice, ok, fail } = useNotice()
 
 const st = ref({ running: false, pending: [], devices: [], active: [] })
 const form = ref({ mode: 'selfhost', broker: '', username: '', password: '', name: '', claudeBin: '', bin: '', proxy: '' })
-const auth = ref({ loggedIn: false, accountId: '', email: '', password: '' })
+const auth = ref({ loggedIn: false, accountId: '', username: '', password: '', mode: 'login' })
 const authBusy = ref(false)
 const busy = ref(false)
 const err = ref('')
@@ -262,13 +268,17 @@ async function loadAuth() {
   }
 }
 
-async function login() {
+async function submitAuth() {
   authBusy.value = true
   try {
-    await api.LoginRemote(auth.value.email, auth.value.password)
+    if (auth.value.mode === 'register') {
+      await api.RegisterRemote(auth.value.username, auth.value.password)
+    } else {
+      await api.LoginRemote(auth.value.username, auth.value.password)
+    }
     auth.value.password = ''
     await loadAuth()
-    ok(t('remote.loggedIn'))
+    ok(auth.value.mode === 'register' ? t('remote.registered') : t('remote.loggedIn'))
   } catch (e) {
     fail(String(e))
   } finally {

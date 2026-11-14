@@ -44,7 +44,7 @@ import (
 //	日志     ReadLog  ClearLog  OpenLogFolder
 //	手机遥控 GetRemoteConfig  SaveRemoteConfig  GetRemoteStatus  StartRemote  StopRemote
 //	         CreateRemoteInvite  DecideRemote  RenameRemote  RevokeRemote  StopRemoteSession  RotateRemoteKey  RemoveRemoteDevice
-//	         LoginRemote  LogoutRemote  RemoteAuthStatus
+//	         LoginRemote  RegisterRemote  LogoutRemote  RemoteAuthStatus
 //	向导     DefaultDeviceName  Initialize
 //	更新     GetUpdateState  CheckUpdate  InstallUpdate（+ 事件 "update"、"update-progress"）  SkipUpdate  SetAutoUpdateCheck
 type App struct {
@@ -509,8 +509,13 @@ func (a *App) StartRemote() error {
 func (a *App) StopRemote() error { return service.RemoteStop() }
 
 // LoginRemote 登录官方账号；账号信息由 host 加密保存。
-func (a *App) LoginRemote(email, password string) error {
-	return service.LoginRemote(email, password)
+func (a *App) LoginRemote(username, password string) error {
+	return service.LoginRemote(username, password)
+}
+
+// RegisterRemote 开放注册并自动保存会话。
+func (a *App) RegisterRemote(username, password string) error {
+	return service.RegisterRemote(username, password)
 }
 
 // LogoutRemote 退出官方账号。

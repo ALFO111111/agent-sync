@@ -325,9 +325,18 @@ func SaveRemoteConfig(rc RemoteConfig) error {
 const remoteAuthBase = "https://agent-sync.yirenzaowusuo.cn/api"
 
 // LoginRemote 登录官方账号，并把账号信息交给本机 host 加密保存。
-func LoginRemote(email, password string) error {
-	body, _ := json.Marshal(map[string]string{"email": email, "password": password})
-	req, err := http.NewRequest(http.MethodPost, remoteAuthBase+"/v1/auth/login", bytes.NewReader(body))
+func LoginRemote(username, password string) error {
+	return authRequest("/v1/auth/login", username, password)
+}
+
+// RegisterRemote 开放注册；成功后自动保存会话。
+func RegisterRemote(username, password string) error {
+	return authRequest("/v1/auth/register", username, password)
+}
+
+func authRequest(path, username, password string) error {
+	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	req, err := http.NewRequest(http.MethodPost, remoteAuthBase+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -338,19 +347,24 @@ func LoginRemote(email, password string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return i18n.Err("登录失败：%s", resp.Status)
+		return i18n.Err("账号请求失败：%s", resp.Status)
 	}
 	var out struct {
 		AccountID    string `json:"accountId"`
+		SessionToken string `json:"sessionToken"`
 		RefreshToken string `json:"refreshToken"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return err
 	}
-	if out.AccountID == "" || out.RefreshToken == "" {
+	token := out.SessionToken
+	if token == "" {
+		token = out.RefreshToken
+	}
+	if out.AccountID == "" || token == "" {
 		return i18n.Err("登录响应缺少账号信息")
 	}
-	st, err := remoteDial(RemoteDir(), remoteRequest{Cmd: "account", AccountID: out.AccountID, RefreshToken: out.RefreshToken}, 5*time.Second)
+	st, err := remoteDial(RemoteDir(), remoteRequest{Cmd: "account", AccountID: out.AccountID, RefreshToken: token}, 5*time.Second)
 	if err != nil {
 		return err
 	}
