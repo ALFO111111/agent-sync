@@ -1,26 +1,13 @@
 package remotev1
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"sync"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 const (
-	// MaxFrame 是单条应用消息上限。
-	MaxFrame = 16 * 1024
 	// ProtocolVersion 是协议版本。
-	ProtocolVersion = 1
-	// ReadTimeout 覆盖客户端 20 秒一次的心跳。
-	ReadTimeout = 75 * time.Second
-	// WriteTimeout 单次写超时。
-	WriteTimeout = 10 * time.Second
-	// MaxMsgPerSecond 单连接消息频率上限（含控制类）。
-	MaxMsgPerSecond = 20
+	ProtocolVersion = 3
 )
 
 // ErrProtocol 帧或字段不合法。
@@ -154,103 +141,6 @@ type SessionSink interface {
 	Subscribe(key string, since int64) ([]SessionEvent, <-chan SessionEvent, func(), error)
 	ActiveSessions() []ActiveInfo
 	History(tool, cwd, sessionID string) ([]HistoryMessage, error)
-}
-
-type session struct {
-	ws   *websocket.Conn
-	wmu  sync.Mutex
-	seal *Sealer
-	open *Opener
-
-	uploads map[string]*pendingAttachment // 本连接上的临时附件（随连接释放）
-
-	window time.Time
-	count  int
-}
-
-// newSession 建立一条加密会话：readDir 是对方→本端的方向，writeDir 是本端→对方。
-func newSession(ws *websocket.Conn, key ContentKey, readDir, writeDir Direction) (*session, error) {
-	seal, err := NewSealer(key, writeDir)
-	if err != nil {
-		return nil, err
-	}
-	open, err := NewOpener(key, readDir)
-	if err != nil {
-		return nil, err
-	}
-	ws.SetReadLimit(MaxFrame)
-	ws.SetPongHandler(func(string) error { return nil })
-	return &session{ws: ws, seal: seal, open: open, window: time.Now()}, nil
-}
-
-func (s *session) read() (Envelope, error) { return s.readWith(ReadTimeout) }
-
-func (s *session) readWith(d time.Duration) (Envelope, error) {
-	var env Envelope
-	now := time.Now()
-	if now.Sub(s.window) >= time.Second {
-		s.window = now
-		s.count = 0
-	}
-	s.count++
-	if s.count > MaxMsgPerSecond {
-		return env, ErrProtocol
-	}
-	s.ws.SetReadDeadline(now.Add(d))
-	kind, b, err := s.ws.ReadMessage()
-	if err != nil {
-		return env, err
-	}
-	if kind != websocket.BinaryMessage && kind != websocket.TextMessage {
-		return env, ErrProtocol
-	}
-	if len(b) == 0 || len(b) > MaxFrame {
-		return env, ErrProtocol
-	}
-	// 外层只接受密文帧；明文（旧客户端或降级尝试）一律拒绝。
-	var outer Envelope
-	if json.Unmarshal(b, &outer) != nil || outer.V != ProtocolVersion || outer.Type != "enc" {
-		return env, ErrProtocol
-	}
-	raw, err := base64.StdEncoding.DecodeString(outer.Data)
-	if err != nil {
-		return env, ErrProtocol
-	}
-	plain, err := s.open.Open(raw)
-	if err != nil {
-		return env, ErrProtocol
-	}
-	if json.Unmarshal(plain, &env) != nil || env.V != ProtocolVersion || env.Type == "" || env.Type == "enc" {
-		return env, ErrProtocol
-	}
-	return env, nil
-}
-
-func (s *session) write(env Envelope) error {
-	env.V = ProtocolVersion
-	plain, err := json.Marshal(env)
-	if err != nil {
-		return err
-	}
-	if len(plain) > MaxPlain {
-		return ErrProtocol
-	}
-	sealed, err := s.seal.Seal(plain)
-	if err != nil {
-		return err
-	}
-	outer := Envelope{V: ProtocolVersion, Type: "enc", Data: base64.StdEncoding.EncodeToString(sealed)}
-	b, err := json.Marshal(outer)
-	if err != nil {
-		return err
-	}
-	if len(b) > MaxFrame {
-		return ErrProtocol
-	}
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	s.ws.SetWriteDeadline(time.Now().Add(WriteTimeout))
-	return s.ws.WriteMessage(websocket.BinaryMessage, b)
 }
 
 // ActiveInfo 是电脑端仍在运行的会话，供断线重连接回。

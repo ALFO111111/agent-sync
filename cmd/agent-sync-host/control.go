@@ -45,7 +45,6 @@ type ctlResponse struct {
 	Active     []activeDTO           `json:"active,omitempty"`
 	HostID     string                `json:"hostId,omitempty"`
 	HostName   string                `json:"hostName,omitempty"`
-	Relay      string                `json:"relay,omitempty"`
 	Broker     string                `json:"broker,omitempty"`
 	Mode       string                `json:"mode,omitempty"`
 	AccountID  string                `json:"accountId,omitempty"`
@@ -204,7 +203,7 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 		return ctlResponse{OK: true, AccountID: st.AccountID, LoggedIn: st.AccountID != "" && st.RefreshToken != ""}
 	case "status":
 		st := d.auth.State()
-		return ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Relay: d.broker, Broker: d.broker, Mode: d.mode, AccountID: st.AccountID, LoggedIn: st.AccountID != "" && st.RefreshToken != "", Version: version, BuildID: buildID, PID: os.Getpid()}
+		return ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Broker: d.broker, Mode: d.mode, AccountID: st.AccountID, LoggedIn: st.AccountID != "" && st.RefreshToken != "", Version: version, BuildID: buildID, PID: os.Getpid()}
 	case "rotate-key":
 		if err := d.host.RotateContentKey(); err != nil {
 			return ctlResponse{Error: err.Error()}

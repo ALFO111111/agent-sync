@@ -7,6 +7,29 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-14
+
+### 变更 / Changed
+
+- 手机遥控从自研 WebSocket 中转切换到 **MQTT（Mosquitto）**；ECS 只做 TLS 入口和 frp 隧道，Broker 运行在 Mac mini。
+  Phone remote switches from the custom WebSocket relay to **MQTT (Mosquitto)**. The ECS only terminates TLS and runs frp; the broker runs on the Mac mini.
+- 官方模式增加账号登录与短期 MQTT token；自建模式可填写自己的 Broker、用户名和密码。会话内容仍使用 AES-256-GCM 端到端加密。
+  Official mode adds account sign-in and short-lived MQTT tokens; self-hosted mode accepts a custom broker, username and password. Session content remains end-to-end encrypted with AES-256-GCM.
+- 流式输出按 100ms 合批，附件改为 64 KiB 分块；断线后按事件序号补发。
+  Streaming output is batched every 100ms, attachments use 64 KiB chunks, and reconnects resume by event sequence.
+
+### 移除 / Removed
+
+- 删除 `internal/relay`、`cmd/agent-sync-relay`、`internal/remotechannel`、`tools/remotepairprobe` 和旧 WebSocket 会话代码。
+  Remove the relay package/command, the remotechannel prototype, the pairing probe and the old WebSocket session code.
+
+### 升级说明 / Upgrade notes
+
+- 传输层和邀请格式都换了：**所有手机和电脑必须更新到 0.7.0，并重新扫码配对**。旧配对记录会失效。
+  The transport and invitation format changed: **update both desktop and mobile to 0.7.0 and pair again**. Old pairings are invalid.
+- Android 沿用 0.6.1 起的长期签名密钥，可覆盖安装；覆盖后仍需重新配对。
+  Android keeps the long-term signing key introduced in 0.6.1 and can update in place; pairing is still required again.
+
 ## [0.6.2] - 2026-11-13
 
 ### 修复 / Fixed

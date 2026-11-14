@@ -188,29 +188,6 @@ func TestRemoteLifecycleIntegration(t *testing.T) {
 	}
 }
 
-func TestNormalizeRelayURL(t *testing.T) {
-	cases := map[string]string{
-		"https://relay.example.com":        "wss://relay.example.com/ws",
-		"https://relay.example.com/":       "wss://relay.example.com/ws",
-		"http://127.0.0.1:18765":           "ws://127.0.0.1:18765/ws",
-		"wss://relay.example.com/ws":       "wss://relay.example.com/ws",
-		"relay.example.com":                "wss://relay.example.com/ws",
-		"https://relay.example.com/custom": "wss://relay.example.com/custom",
-	}
-	for in, want := range cases {
-		got, err := NormalizeRelayURL(in)
-		if err != nil || got != want {
-			t.Errorf("%q -> %q (%v), want %q", in, got, err, want)
-		}
-	}
-	if _, err := NormalizeRelayURL("ftp://x"); err == nil {
-		t.Fatal("ftp accepted")
-	}
-	if DisplayRelayURL("wss://relay.example.com/ws") != "https://relay.example.com" {
-		t.Fatal("display")
-	}
-}
-
 func TestNormalizeBrokerURL(t *testing.T) {
 	cases := map[string]string{
 		"https://broker.example.com":        "wss://broker.example.com/mqtt",

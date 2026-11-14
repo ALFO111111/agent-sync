@@ -68,8 +68,6 @@ func run(args []string) int {
 		mode := fs.String("mode", "selfhost", "official or selfhost")
 		user := fs.String("user", "", "selfhost MQTT username")
 		pass := fs.String("pass", "", "selfhost MQTT password")
-		relayURL := fs.String("relay", "", "deprecated: use -broker")
-		_ = fs.String("public", "", "deprecated and ignored")
 		name := fs.String("name", "", "host display name")
 		claudeBin := fs.String("claude-bin", "", "path to the claude cli (auto-detected when empty)")
 		dir := fs.String("state", defaultStateDir(), "state directory")
@@ -77,9 +75,6 @@ func run(args []string) int {
 		if err := fs.Parse(rest); err != nil {
 			usage()
 			return 2
-		}
-		if *broker == "" {
-			*broker = *relayURL
 		}
 		if *broker == "" || (*mode != "official" && *mode != "selfhost") {
 			usage()
@@ -232,6 +227,6 @@ func printResponse(cmd string, resp ctlResponse) {
 	case "session-stop":
 		fmt.Println(i18n.T("已结束会话"))
 	case "status":
-		fmt.Println(i18n.T("主机 %s，中转 %s", resp.HostName, resp.Relay))
+		fmt.Println(i18n.T("主机 %s，Broker %s", resp.HostName, resp.Broker))
 	}
 }

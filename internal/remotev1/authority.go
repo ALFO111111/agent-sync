@@ -38,10 +38,12 @@ type State struct {
 	Version    int      `json:"version"`
 	HostID     string   `json:"hostId"`
 	PrivateKey string   `json:"privateKey"`
-	Route      string   `json:"route"`
-	Credential string   `json:"credential"`
 	ContentKey string   `json:"contentKey,omitempty"` // 手机与电脑共用的内容加密密钥（base64）
 	Devices    []Device `json:"devices"`
+
+	// 旧 WebSocket 中转字段，仅用于识别旧状态并强制重新配对。
+	LegacyRoute      string `json:"route,omitempty"`
+	LegacyCredential string `json:"credential,omitempty"`
 
 	// 官方模式登录后写入；自建模式保持为空。
 	AccountID    string `json:"accountId,omitempty"`
@@ -58,8 +60,7 @@ type Store interface {
 type Invitation struct {
 	Version    int       `json:"v"`
 	URL        string    `json:"url"`
-	Route      string    `json:"route"`
-	Credential string    `json:"credential"`
+	UID        string    `json:"uid,omitempty"`
 	ID         string    `json:"id"`
 	Secret     string    `json:"secret"`
 	ContentKey string    `json:"contentKey"`
@@ -68,15 +69,14 @@ type Invitation struct {
 	Expires    time.Time `json:"expires"`
 }
 
-// Validate 只做结构校验；URL 必须是 wss。
+// Validate 只做结构校验；URL 必须是 wss（自建也建议 wss）。
 func (i Invitation) Validate() error {
 	u, err := url.Parse(i.URL)
 	if err != nil || u.Scheme != "wss" || u.Host == "" || u.User != nil ||
-		u.RawQuery != "" || u.Fragment != "" || u.Path != "/ws" {
+		u.RawQuery != "" || u.Fragment != "" || u.Path != "/mqtt" {
 		return ErrDenied
 	}
-	if i.Version != 2 || len(i.Route) != 64 || len(i.Credential) != 64 ||
-		len(i.ID) != 64 || len(i.Secret) != 64 {
+	if i.Version != 3 || i.HostID == "" || len(i.ID) != 64 || len(i.Secret) != 64 {
 		return ErrDenied
 	}
 	if _, err := ParseContentKey(i.ContentKey); err != nil {
@@ -115,6 +115,7 @@ type Authority struct {
 	state       *State
 	store       Store
 	url         string
+	uid         string
 	invitations map[string]Invitation
 	pending     map[string]*Pending
 	failed      int
@@ -127,6 +128,7 @@ func NewAuthority(store Store, url string) (*Authority, error) {
 	a := &Authority{
 		store:       store,
 		url:         url,
+		uid:         "local",
 		invitations: map[string]Invitation{},
 		pending:     map[string]*Pending{},
 	}
@@ -139,7 +141,19 @@ func NewAuthority(store Store, url string) (*Authority, error) {
 	}
 	created := false
 	if a.state == nil {
-		a.state = &State{Version: 1, HostID: RandomToken(16), Route: RandomToken(32), Credential: RandomToken(32)}
+		a.state = &State{Version: 1, HostID: RandomToken(16)}
+		created = true
+	}
+	// 旧 WebSocket 状态一律作废：清空设备并轮换内容密钥，强制重新配对。
+	if a.state.LegacyRoute != "" || a.state.LegacyCredential != "" {
+		a.state.LegacyRoute = ""
+		a.state.LegacyCredential = ""
+		a.state.Devices = nil
+		key, err := NewContentKey()
+		if err != nil {
+			return nil, err
+		}
+		a.state.ContentKey = key.Base64()
 		created = true
 	}
 	if a.state.PrivateKey == "" {
@@ -161,7 +175,7 @@ func NewAuthority(store Store, url string) (*Authority, error) {
 	if _, err := ParseContentKey(a.state.ContentKey); err != nil {
 		return nil, ErrDenied
 	}
-	if a.state.Version != 1 || a.state.HostID == "" || a.state.Route == "" || a.state.Credential == "" {
+	if a.state.Version != 1 || a.state.HostID == "" {
 		return nil, ErrDenied
 	}
 	if created && store != nil {
@@ -177,6 +191,16 @@ func (a *Authority) State() State {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return *a.state
+}
+
+// SetUID 设置邀请里的账号命名空间；自建模式固定为 local。
+func (a *Authority) SetUID(uid string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if uid == "" {
+		uid = "local"
+	}
+	a.uid = uid
 }
 
 // SetAccount 保存官方模式的账号和 refresh token（加密状态文件）。
@@ -218,10 +242,9 @@ func (a *Authority) Invite(hostName string) (Invitation, error) {
 		return Invitation{}, ErrDenied
 	}
 	inv := Invitation{
-		Version:    2,
+		Version:    3,
 		URL:        a.url,
-		Route:      a.state.Route,
-		Credential: a.state.Credential,
+		UID:        a.uid,
 		ID:         RandomToken(32),
 		Secret:     RandomToken(32),
 		ContentKey: a.state.ContentKey,

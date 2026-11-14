@@ -38,7 +38,6 @@ type RemoteStatus struct {
 	InstallError   string          `json:"installError,omitempty"`
 	HostID         string          `json:"hostId,omitempty"`
 	HostName       string          `json:"hostName,omitempty"`
-	Relay          string          `json:"relay,omitempty"`
 	Broker         string          `json:"broker,omitempty"`
 	Mode           string          `json:"mode,omitempty"`
 	AccountID      string          `json:"accountId,omitempty"`
@@ -138,7 +137,6 @@ type remoteResponse struct {
 	Active     []RemoteActive  `json:"active,omitempty"`
 	HostID     string          `json:"hostId,omitempty"`
 	HostName   string          `json:"hostName,omitempty"`
-	Relay      string          `json:"relay,omitempty"`
 	Broker     string          `json:"broker,omitempty"`
 	Mode       string          `json:"mode,omitempty"`
 	AccountID  string          `json:"accountId,omitempty"`
@@ -254,11 +252,7 @@ func GetRemoteStatus(cfg *config.Config) RemoteStatus {
 	st.NeedsRestart = cfg.RemoteBin == "" && hostbundle.Available() && (resp.Version != st.BundledVersion || resp.BuildID != st.BundledBuildID || resp.PID <= 0)
 	st.HostID = resp.HostID
 	st.HostName = resp.HostName
-	st.Relay = resp.Relay
 	st.Broker = resp.Broker
-	if st.Broker == "" {
-		st.Broker = resp.Relay
-	}
 	st.Mode = resp.Mode
 	st.AccountID = resp.AccountID
 	st.LoggedIn = resp.LoggedIn
@@ -291,9 +285,6 @@ func GetRemoteConfig() (*RemoteConfig, error) {
 		mode = "selfhost"
 	}
 	broker := DisplayBrokerURL(cfg.RemoteBroker)
-	if broker == "" {
-		broker = DisplayRelayURL(cfg.RemoteRelay)
-	}
 	return &RemoteConfig{
 		Mode:      mode,
 		Broker:    broker,
@@ -412,9 +403,6 @@ func remoteEnsureAt(cfg *config.Config, dir string) error {
 		mode = "selfhost"
 	}
 	broker := cfg.RemoteBroker
-	if broker == "" {
-		broker, _ = NormalizeRelayURL(cfg.RemoteRelay)
-	}
 	if broker == "" {
 		return errors.New("remote broker address is not configured")
 	}
@@ -709,37 +697,6 @@ func RemoteStopSession(cfg *config.Config, key string) error {
 	return nil
 }
 
-// NormalizeRelayURL 把用户填的地址统一成主机连接用的 WebSocket 地址。
-// 支持 https://host、http://host、wss://host、ws://host；没有路径时补 /ws。
-func NormalizeRelayURL(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", nil
-	}
-	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return "", i18n.Err("中转地址格式不对")
-	}
-	switch u.Scheme {
-	case "https":
-		u.Scheme = "wss"
-	case "http":
-		u.Scheme = "ws"
-	case "wss", "ws":
-	default:
-		return "", i18n.Err("中转地址只支持 http/https/ws/wss")
-	}
-	u.Fragment = ""
-	u.RawQuery = ""
-	if u.Path == "" || u.Path == "/" {
-		u.Path = "/ws"
-	}
-	return u.String(), nil
-}
-
 // NormalizeBrokerURL 规范化 MQTT Broker 地址；默认补 /mqtt。
 func NormalizeBrokerURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
@@ -787,26 +744,6 @@ func DisplayBrokerURL(raw string) string {
 	return u.String()
 }
 
-// DisplayRelayURL 把配置里的 wss 地址显示成用户习惯的 https://host 形式。
-func DisplayRelayURL(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Host == "" {
-		return raw
-	}
-	switch u.Scheme {
-	case "wss":
-		u.Scheme = "https"
-	case "ws":
-		u.Scheme = "http"
-	default:
-		return raw
-	}
-	if u.Path == "/ws" || u.Path == "/" {
-		u.Path = ""
-	}
-	return u.String()
-}
-
 // RemoteRemoveDevice 从主机白名单里彻底删除一台设备。
 func RemoteRemoveDevice(cfg *config.Config, ref string) error {
 	if err := RemoteEnsure(cfg); err != nil {
@@ -822,11 +759,3 @@ func RemoteRemoveDevice(cfg *config.Config, ref string) error {
 	return nil
 }
 
-// SetRemoteConfig 保存中转地址与显示名。
-func SetRemoteConfig(cfg *config.Config, relay, public, name, claudeBin string) error {
-	cfg.RemoteRelay = strings.TrimSpace(relay)
-	cfg.RemotePublic = strings.TrimSpace(public)
-	cfg.RemoteName = strings.TrimSpace(name)
-	cfg.RemoteClaudeBin = strings.TrimSpace(claudeBin)
-	return config.Save(cfg)
-}

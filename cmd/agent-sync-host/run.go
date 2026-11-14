@@ -109,6 +109,7 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 		if mode == "official" {
 			uid = state.AccountID
 		}
+		auth.SetUID(uid)
 		topics := remotev1.TopicSet{UID: uid, HID: state.HostID, DID: state.HostID}
 
 		var token mqttlink.TokenProvider

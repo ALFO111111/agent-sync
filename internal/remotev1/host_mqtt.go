@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const streamBatch = 100 * time.Millisecond
+const (
+	streamBatch      = 100 * time.Millisecond
+	maxSubscriptions = 4
+)
 
 type deviceState struct {
 	mu           sync.Mutex
@@ -26,6 +29,7 @@ type deviceState struct {
 	history      historyPager
 	subs         int
 	uploads      map[string]Attachment
+	lastSeen     time.Time
 }
 
 func (h *Host) contentKey() ContentKey {
@@ -91,6 +95,9 @@ func (h *Host) onMessage(ctx context.Context, tr Transport, ts TopicSet, topic s
 	h.mu.Unlock()
 	st.mu.Lock()
 	fresh := st.window.Accept(f.Seq)
+	if fresh {
+		st.lastSeen = time.Now()
+	}
 	st.mu.Unlock()
 	if !fresh {
 		return
