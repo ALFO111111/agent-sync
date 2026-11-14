@@ -42,6 +42,9 @@ type Host struct {
 	conns   map[*websocket.Conn]string // 连接 → 设备公钥（旧 WebSocket 路径）
 	devices map[string]*deviceState    // 设备ID → MQTT 状态
 	seqs    map[string]uint64          // 设备ID → 电脑发出消息的序号
+
+	attachDir   string
+	attachments *attachmentStore
 }
 
 // RotateContentKey 更换共享密钥并断开所有已连接的手机。

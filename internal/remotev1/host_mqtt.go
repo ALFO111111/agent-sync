@@ -2,7 +2,9 @@ package remotev1
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"os"
 	"sync"
 	"time"
 )
@@ -23,6 +25,7 @@ type deviceState struct {
 	historyPaged bool
 	history      historyPager
 	subs         int
+	uploads      map[string]Attachment
 }
 
 func (h *Host) contentKey() ContentKey {
@@ -48,6 +51,9 @@ func (h *Host) Run(ctx context.Context, tr Transport, ts TopicSet) error {
 	}
 	if h.seqs == nil {
 		h.seqs = map[string]uint64{}
+	}
+	if h.attachments == nil {
+		h.attachments = newAttachmentStore(h.attachDir)
 	}
 	h.mu.Unlock()
 
@@ -345,11 +351,21 @@ func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, 
 		if h.Sessions == nil {
 			return
 		}
-		if len(env.Attachments) > 0 {
-			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "attachments unsupported"})
+		if len(env.Attachments) > MaxAttachments {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "too many attachments"})
 			return
 		}
-		if err := h.Sessions.Send(env.SessionKey, env.Text, nil); err != nil {
+		atts := make([]Attachment, 0, len(env.Attachments))
+		for _, id := range env.Attachments {
+			a, ok := st.uploads[id]
+			if !ok {
+				_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "attachment missing"})
+				return
+			}
+			atts = append(atts, a)
+			delete(st.uploads, id)
+		}
+		if err := h.Sessions.Send(env.SessionKey, env.Text, atts); err != nil {
 			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
 		}
 
@@ -414,8 +430,61 @@ func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, 
 			h.streamEvents(ctx, tr, ts, did, env.SessionKey, live, cancel)
 		}()
 
-	case "attach.begin", "attach.chunk", "attach.end":
-		_ = send(Envelope{Type: "attach.error", ID: env.ID, AttachID: env.AttachID, Error: "unsupported"})
+	case "attach.begin":
+		if st.uploads == nil {
+			st.uploads = map[string]Attachment{}
+		}
+		if len(st.uploads) >= maxPendingAttachments {
+			_ = send(Envelope{Type: "attach.error", ID: env.ID, Error: "too many pending attachments"})
+			return
+		}
+		switch env.Kind {
+		case "image", "text", "binary":
+		default:
+			_ = send(Envelope{Type: "attach.error", ID: env.ID, Error: "invalid attachment kind"})
+			return
+		}
+		id := RandomToken(16)
+		if err := h.attachments.Begin(id, env.Size, env.SHA256); err != nil {
+			_ = send(Envelope{Type: "attach.error", ID: env.ID, Error: err.Error()})
+			return
+		}
+		st.uploads[id] = Attachment{
+			Name:      sanitizeAttachmentName(env.Name),
+			MediaType: env.MediaType,
+			Kind:      env.Kind,
+		}
+		_ = send(Envelope{Type: "attach.begin", ID: env.ID, AttachID: id, ChunkSize: MQTTAttachChunk})
+
+	case "attach.chunk":
+		raw, err := base64.StdEncoding.DecodeString(env.Data)
+		if err == nil {
+			err = h.attachments.Write(env.AttachID, int(env.Seq), raw)
+		}
+		if err != nil {
+			_ = send(Envelope{Type: "attach.error", AttachID: env.AttachID, Error: err.Error()})
+		}
+
+	case "attach.end":
+		path, err := h.attachments.Commit(env.AttachID)
+		if err != nil {
+			_ = send(Envelope{Type: "attach.error", ID: env.ID, AttachID: env.AttachID, Error: err.Error()})
+			return
+		}
+		data, err := os.ReadFile(path)
+		os.Remove(path)
+		if err != nil {
+			_ = send(Envelope{Type: "attach.error", ID: env.ID, AttachID: env.AttachID, Error: err.Error()})
+			return
+		}
+		a, ok := st.uploads[env.AttachID]
+		if !ok {
+			_ = send(Envelope{Type: "attach.error", ID: env.ID, AttachID: env.AttachID, Error: "unknown attachment"})
+			return
+		}
+		a.Data = data
+		st.uploads[env.AttachID] = a
+		_ = send(Envelope{Type: "attach.ready", ID: env.ID, AttachID: env.AttachID})
 
 	default:
 		_ = send(Envelope{Type: "error", ID: env.ID, Error: "unsupported"})

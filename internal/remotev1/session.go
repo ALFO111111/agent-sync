@@ -74,6 +74,7 @@ type Envelope struct {
 	AttachID    string   `json:"attachId,omitempty"`
 	ChunkSize   int      `json:"chunkSize,omitempty"`
 	Size        int64    `json:"size,omitempty"`
+	SHA256      string   `json:"sha256,omitempty"`
 	Attachments []string `json:"attachments,omitempty"`
 
 	// 历史对话（打开老会话时）
