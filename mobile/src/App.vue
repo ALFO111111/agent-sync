@@ -1245,7 +1245,7 @@ async function pickGallery() {
 <template>
   <main class="app">
     <!-- 未连接且不在聊天里：显示可复用的连接面板 -->
-    <div v-if="!connected && !chatOpen" class="page connect-gate">
+    <div v-if="!connected && !chatOpen && tab !== 'settings'" class="page connect-gate">
       <ConnectPanel
         :state="state" :message="message" :status-label="statusLabel"
         :store="pairing" :pairings="pairings" :busy="busy"
@@ -1435,12 +1435,13 @@ async function pickGallery() {
         />
       </section>
 
-      <nav v-if="!chatOpen && !filesOpen" class="tabbar">
-        <button :class="{ active: tab === 'home' }" @click="go('home')"><Icon name="home" :size="22" /><span>首页</span></button>
-        <button :class="{ active: tab === 'sessions' }" @click="go('sessions')"><Icon name="chat" :size="22" /><span>会话</span></button>
-        <button :class="{ active: tab === 'settings' }" @click="go('settings')"><Icon name="settings" :size="22" /><span>设置</span></button>
-      </nav>
     </template>
+
+    <nav v-if="!chatOpen && !filesOpen" class="tabbar">
+      <button :class="{ active: tab === 'home' }" @click="go('home')"><Icon name="home" :size="22" /><span>首页</span></button>
+      <button :class="{ active: tab === 'sessions' }" @click="go('sessions')"><Icon name="chat" :size="22" /><span>会话</span></button>
+      <button :class="{ active: tab === 'settings' }" @click="go('settings')"><Icon name="settings" :size="22" /><span>设置</span></button>
+    </nav>
 
     <!-- 聊天：全屏，参考 DeepSeek 的对话页 -->
     <section v-if="chatOpen && !filesOpen" class="chat-page">

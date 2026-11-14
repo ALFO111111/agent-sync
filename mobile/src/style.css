@@ -109,7 +109,7 @@ input:focus, textarea:focus { border-color: color-mix(in srgb, var(--accent) 55%
   padding: 12px 16px 96px;
   -webkit-overflow-scrolling: touch;
 }
-.connect-gate { display: flex; flex-direction: column; justify-content: center; padding-bottom: 32px; }
+.connect-gate { display: flex; flex-direction: column; justify-content: center; padding-bottom: 96px; }
 
 /* 顶部：不再放大标题，只留页面名和连接状态 */
 .appbar {
@@ -219,6 +219,7 @@ button.danger { background: var(--err-soft); color: var(--err); border: 1px soli
 .setting-col:last-of-type { border-bottom: 0; }
 .setting-col label { color: var(--muted); font-size: 13px; }
 .setting-col input { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 14px; }
+.settings-entry { display: block; margin: 14px auto 0; }
 .about-card { text-align: center; }
 .about-name { font-size: 18px; font-weight: 700; letter-spacing: -.02em; margin-bottom: 4px; }
 
