@@ -115,6 +115,47 @@ func TestHostDispatchDeviceList(t *testing.T) {
 	}
 }
 
+func TestStreamEventsAreBatched(t *testing.T) {
+	key, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, key)
+	h := &Host{Authority: auth, Logf: func(string, ...any) {}}
+	tr := newFakeTransport()
+	ts := TopicSet{UID: "u1", HID: "h1", DID: "d1"}
+	live := make(chan SessionEvent, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go h.streamEvents(ctx, tr, ts, "d1", "s1", live, func() {})
+	for i := 1; i <= 10; i++ {
+		live <- SessionEvent{Seq: int64(i), Kind: "text_delta", Text: "x"}
+	}
+
+	time.Sleep(250 * time.Millisecond)
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+
+	messages, events := 0, 0
+	for {
+		select {
+		case msg := <-tr.sent:
+			env := readEnvelope(t, key, auth.state.HostID, uint64(messages+1), msg)
+			if env.Type != "session.events" {
+				t.Fatalf("want session.events, got %s", env.Type)
+			}
+			messages++
+			events += len(env.Events)
+		default:
+			if messages == 0 {
+				t.Fatal("no batched message")
+			}
+			if messages >= 10 || events != 10 {
+				t.Fatalf("messages=%d events=%d", messages, events)
+			}
+			return
+		}
+	}
+}
+
 func readEnvelope(t *testing.T, key ContentKey, from string, seq uint64, msg struct {
 	topic   string
 	payload []byte

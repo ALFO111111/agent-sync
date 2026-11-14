@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 )
+
+const streamBatch = 100 * time.Millisecond
 
 type deviceState struct {
 	mu           sync.Mutex
@@ -388,13 +391,82 @@ func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, 
 		_ = send(Envelope{Type: "session.closed", ID: env.ID, SessionKey: env.SessionKey})
 
 	case "session.subscribe":
-		_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "unsupported"})
+		if h.Sessions == nil {
+			return
+		}
+		if st.subs >= maxSubscriptions {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "too many subscriptions"})
+			return
+		}
+		history, live, cancel, err := h.Sessions.Subscribe(env.SessionKey, env.SinceSeq)
+		if err != nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
+			return
+		}
+		st.subs++
+		if send(Envelope{Type: "session.events", ID: env.ID, SessionKey: env.SessionKey, Events: history}) != nil {
+			cancel()
+			st.subs--
+			return
+		}
+		go func() {
+			defer h.releaseSub(did)
+			h.streamEvents(ctx, tr, ts, did, env.SessionKey, live, cancel)
+		}()
 
 	case "attach.begin", "attach.chunk", "attach.end":
 		_ = send(Envelope{Type: "attach.error", ID: env.ID, AttachID: env.AttachID, Error: "unsupported"})
 
 	default:
 		_ = send(Envelope{Type: "error", ID: env.ID, Error: "unsupported"})
+	}
+}
+
+func (h *Host) releaseSub(did string) {
+	h.mu.Lock()
+	st := h.devices[did]
+	h.mu.Unlock()
+	if st == nil {
+		return
+	}
+	st.mu.Lock()
+	if st.subs > 0 {
+		st.subs--
+	}
+	st.mu.Unlock()
+}
+
+// streamEvents 把高频事件按 100ms 合批后以 QoS 0 发布到 evt。
+func (h *Host) streamEvents(ctx context.Context, tr Transport, ts TopicSet, did, sessionKey string, live <-chan SessionEvent, cancel func()) {
+	defer cancel()
+	t := time.NewTicker(streamBatch)
+	defer t.Stop()
+	var buf []SessionEvent
+	flush := func() {
+		if len(buf) == 0 {
+			return
+		}
+		env := Envelope{Type: "session.events", SessionKey: sessionKey, Events: buf}
+		_ = h.reply(tr, ts.Evt(), h.Authority.State().HostID, h.nextSeq(did), env, 0)
+		buf = buf[:0]
+	}
+	for {
+		select {
+		case ev, ok := <-live:
+			if !ok {
+				flush()
+				return
+			}
+			buf = append(buf, ev)
+			if len(buf) >= 100 {
+				flush()
+			}
+		case <-t.C:
+			flush()
+		case <-ctx.Done():
+			flush()
+			return
+		}
 	}
 }
 
