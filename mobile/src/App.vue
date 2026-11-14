@@ -32,6 +32,7 @@ const echoText = ref('hello')
 const device = ref(null)
 const pairing = ref(null)
 const pairings = ref([])
+const conn = ref({ url: 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: '', password: '' })
 const ready = ref(null)
 const devices = ref([])
 const busy = ref(false)
@@ -239,19 +240,24 @@ function onPending(id) {
   log('配对请求已提交，请在电脑上运行 pending 后 approve')
 }
 
+async function saveConn() {
+  await secureSet('mqttConn', JSON.stringify(conn.value))
+  message.value = 'MQTT 连接设置已保存'
+  log('MQTT 连接设置已保存')
+}
+
 async function doPair(invitation) {
-  if (!invitation?.url || !invitation?.route) throw new Error('邀请格式不对')
+  if (!invitation?.hostId || !invitation?.contentKey) throw new Error('邀请格式不对')
   state.value = 'connecting'
-  message.value = '正在连接中转…'
-  session = await pair(invitation, device.value, deviceName.value, onPending)
+  message.value = '正在连接 Broker…'
+  session = await pair(invitation, device.value, deviceName.value, onPending, conn.value)
   ready.value = session.ready
   const entry = {
     hostId: invitation.hostId || session.ready.hostId || '',
-    url: invitation.url,
-    route: invitation.route,
-    credential: invitation.credential,
+    uid: invitation.uid || 'local',
+    broker: conn.value.url || invitation.url,
     name: session.ready.hostName || '电脑',
-    deviceId: session.ready.deviceId,
+    deviceId: session.ready.deviceId || fingerprint(device.value.publicKey),
     e2eeKey: invitation.contentKey,
   }
   pairings.value = upsertPairing(pairings.value, entry)
@@ -270,7 +276,7 @@ async function doReconnect() {
   if (!pairing.value) return
   state.value = 'connecting'
   message.value = '正在重连…'
-  session = await reconnect(pairing.value, device.value, onPending)
+  session = await reconnect(pairing.value, device.value, onPending, conn.value)
   ready.value = session.ready
   state.value = 'connected'
   message.value = `已连接到 ${pairing.value.name}`
@@ -318,7 +324,7 @@ async function autoReconnect() {
       if (attempt > 0) await new Promise(r => setTimeout(r, Math.min(30000, 1000 * 2 ** attempt)))
       state.value = 'reconnecting'
       try {
-        session = await reconnect(pairing.value, device.value, onPending)
+        session = await reconnect(pairing.value, device.value, onPending, conn.value)
         ready.value = session.ready
         attachClose()
         state.value = 'connected'
@@ -784,7 +790,13 @@ onMounted(async () => {
     await initCrypto()
     await loadOrCreateDevice()
     await loadPairings()
-    if (pairing.value && !pairing.value.e2eeKey) {
+    try {
+      const rawConn = await secureGet('mqttConn')
+      if (rawConn) conn.value = { ...conn.value, ...JSON.parse(rawConn) }
+    } catch {
+      // 配置损坏时用默认值
+    }
+    if (pairing.value && (!pairing.value.e2eeKey || !pairing.value.hostId)) {
       log('这台电脑需要重新配对（升级后首次）')
       pairing.value = null
     }
@@ -1277,6 +1289,23 @@ async function pickGallery() {
               </button>
             </div>
           </div>
+        </div>
+
+        <div class="section-title">MQTT 连接</div>
+        <div class="card">
+          <div class="setting-col">
+            <label>Broker 地址</label>
+            <input v-model.trim="conn.url" placeholder="wss://agent-sync.yirenzaowusuo.cn/mqtt" />
+          </div>
+          <div class="setting-col">
+            <label>用户名（自建）</label>
+            <input v-model.trim="conn.username" autocomplete="username" />
+          </div>
+          <div class="setting-col">
+            <label>密码（自建）</label>
+            <input v-model="conn.password" type="password" autocomplete="current-password" />
+          </div>
+          <button class="pill" @click="saveConn">保存连接设置</button>
         </div>
 
         <div class="section-title">电脑</div>

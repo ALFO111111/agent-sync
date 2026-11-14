@@ -1,8 +1,7 @@
-// v1 协议客户端：与 Go 的 internal/remotev1 对应。
-// 传输是外层 WSS；本版本没有内层端到端加密（见文档）。
+// v3 协议客户端：与 Go 的 internal/remotev1 对应，传输改为 MQTT。
 import * as ed from '@noble/ed25519'
 import { sha256, sha512 } from '@noble/hashes/sha2.js'
-import { Opener, Sealer, parseKey } from './e2ee.js'
+import { MQTTLink, topicSet } from './mqttlink.js'
 
 ed.hashes.sha512 = sha512
 
@@ -49,125 +48,6 @@ export function parseDeepLink(url) {
     return data ? JSON.parse(new TextDecoder().decode(unb64url(data))) : null
   } catch {
     return null
-  }
-}
-
-class Link {
-  constructor(ws) {
-    this.ws = ws
-    this.queue = []
-    this.waiters = []
-    this.sealer = null
-    this.opener = null
-    ws.binaryType = 'arraybuffer'
-    ws.onmessage = ev => {
-      const text = typeof ev.data === 'string' ? ev.data : dec.decode(new Uint8Array(ev.data))
-      let msg
-      try {
-        msg = JSON.parse(text)
-      } catch {
-        return
-      }
-      if (this.opener) {
-        // 加密开启后只接受密文帧；明文一律丢弃（不降级）。
-        if (msg.type !== 'enc' || typeof msg.data !== 'string') return
-        try {
-          msg = JSON.parse(dec.decode(this.opener.open(unb64(msg.data))))
-        } catch {
-          return
-        }
-      }
-      this.push(msg)
-    }
-    this.onClose = null
-    this.closed = false
-    ws.onclose = () => {
-      this.closed = true
-      // 连接已经断了：等待中的请求立刻失败，不要干等超时。
-      for (const w of this.waiters.splice(0)) w.fail(new Error('disconnected'))
-      if (this.onClose) this.onClose()
-    }
-  }
-
-  static async open(url) {
-    const ws = new WebSocket(url)
-    await new Promise((resolve, reject) => {
-      ws.onopen = resolve
-      ws.onerror = () => reject(new Error('relay dial failed'))
-    })
-    return new Link(ws)
-  }
-
-  push(msg) {
-    // 会话事件是持续的推送，不进入请求/响应队列。
-    if (msg.type === 'session.event' && this.onSessionEvent) {
-      this.onSessionEvent(msg)
-      return
-    }
-    const index = this.waiters.findIndex(w => !w.pred || w.pred(msg))
-    if (index >= 0) this.waiters.splice(index, 1)[0].ok(msg)
-    else this.queue.push(msg)
-  }
-
-  next(timeoutMs = 15000) {
-    if (this.queue.length) return Promise.resolve(this.queue.shift())
-    if (this.closed) return Promise.reject(new Error('disconnected'))
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const i = this.waiters.indexOf(w)
-        if (i >= 0) this.waiters.splice(i, 1)
-        reject(new Error('timeout'))
-      }, timeoutMs)
-      const w = {
-        ok: msg => { clearTimeout(timer); resolve(msg) },
-        fail: err => { clearTimeout(timer); reject(err) },
-      }
-      this.waiters.push(w)
-    })
-  }
-
-  until(pred, timeoutMs = 30000) {
-    const index = this.queue.findIndex(pred)
-    if (index >= 0) return Promise.resolve(this.queue.splice(index, 1)[0])
-    if (this.closed) return Promise.reject(new Error('disconnected'))
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const index = this.waiters.indexOf(waiter)
-        if (index >= 0) this.waiters.splice(index, 1)
-        reject(new Error('timeout'))
-      }, timeoutMs)
-      const waiter = {
-        pred,
-        ok: msg => { clearTimeout(timer); resolve(msg) },
-        fail: err => { clearTimeout(timer); reject(err) },
-      }
-      this.waiters.push(waiter)
-    })
-  }
-
-  // 开启内层加密：手机→电脑用 c2h，电脑→手机用 h2c。
-  enableCipher(keyB64) {
-    const key = parseKey(keyB64)
-    this.sealer = new Sealer(key, 'c2h')
-    this.opener = new Opener(key, 'h2c')
-  }
-
-  // 应用帧必须是二进制：中转只转发二进制帧。
-  send(obj) {
-    if (!this.sealer) {
-      this.ws.send(enc.encode(JSON.stringify(obj)))
-      return
-    }
-    const sealed = this.sealer.seal(enc.encode(JSON.stringify(obj)))
-    this.ws.send(enc.encode(JSON.stringify({ v: 1, type: 'enc', data: b64(sealed) })))
-  }
-
-  close() {
-    try {
-      this.ws.close()
-    } catch {
-      // 已关闭
-    }
   }
 }
 
@@ -459,32 +339,54 @@ async function connect(link, device, name, invitation, onPending) {
 }
 
 // 首次配对：invitation 来自扫码/粘贴。
-export async function pair(invitation, device, name, onPending) {
-  if (invitation?.v !== 2 || !invitation?.contentKey) {
+// conn 提供 Broker 地址和自建用户名密码；官方模式由调用方先换好 token。
+export async function pair(invitation, device, name, onPending, conn = {}) {
+  if (invitation?.v !== 3 || !invitation?.contentKey || !invitation?.hostId) {
     throw new Error('邀请来自旧版本，请在电脑上重新生成')
   }
-  const link = await Link.open(invitation.url)
-  link.ws.send(
-    JSON.stringify({
-      version: 1,
-      role: 'connect',
-      route: invitation.route,
-      credential: invitation.credential,
-    }),
-  )
-  await link.until(m => m.role === 'paired', 60000)
-  link.enableCipher(invitation.contentKey)
-  return connect(link, device, name, invitation, onPending)
+  const did = fingerprint(device.publicKey)
+  const url = conn.url || invitation.url
+  if (!url) throw new Error('缺少 Broker 地址')
+  const topics = topicSet(invitation.uid || 'local', invitation.hostId, did)
+  const link = await MQTTLink.create({
+    url,
+    username: conn.username,
+    password: conn.password,
+    topics,
+    mode: 'pair',
+    contentKey: invitation.contentKey,
+    hostID: invitation.hostId,
+    deviceID: did,
+  })
+  try {
+    const session = await connect(link, device, name, invitation, onPending)
+    await link.switchToSession()
+    return session
+  } catch (err) {
+    link.close()
+    throw err
+  }
 }
 
-// 已配对设备重连：只需要保存的 route/credential 和加密密钥。
-export async function reconnect(saved, device, onPending) {
-  if (!saved?.e2eeKey) throw new Error('需要重新配对（缺少加密密钥）')
-  const link = await Link.open(saved.url)
-  link.ws.send(
-    JSON.stringify({ version: 1, role: 'connect', route: saved.route, credential: saved.credential }),
-  )
-  await link.until(m => m.role === 'paired', 60000)
-  link.enableCipher(saved.e2eeKey)
-  return connect(link, device, saved.name, null, onPending)
+// 已配对设备重连：使用保存的 Broker、主题前缀和加密密钥。
+export async function reconnect(saved, device, onPending, conn = {}) {
+  if (!saved?.e2eeKey || !saved?.hostId) throw new Error('需要重新配对（缺少加密密钥）')
+  const did = saved.deviceId || fingerprint(device.publicKey)
+  const topics = topicSet(saved.uid || 'local', saved.hostId, did)
+  const link = await MQTTLink.create({
+    url: conn.url || saved.broker || saved.url,
+    username: conn.username,
+    password: conn.password,
+    topics,
+    mode: 'session',
+    contentKey: saved.e2eeKey,
+    hostID: saved.hostId,
+    deviceID: did,
+  })
+  try {
+    return await connect(link, device, saved.name, null, onPending)
+  } catch (err) {
+    link.close()
+    throw err
+  }
 }

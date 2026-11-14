@@ -215,6 +215,10 @@ button.danger { background: var(--err-soft); color: var(--err); border: 1px soli
 .setting-row:last-child { border-bottom: 0; }
 .setting-row > span { color: var(--muted); font-size: 13px; }
 .setting-row b { font-weight: 550; text-align: right; overflow: hidden; text-overflow: ellipsis; }
+.setting-col { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.setting-col:last-of-type { border-bottom: 0; }
+.setting-col label { color: var(--muted); font-size: 13px; }
+.setting-col input { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 14px; }
 .about-card { text-align: center; }
 .about-name { font-size: 18px; font-weight: 700; letter-spacing: -.02em; margin-bottom: 4px; }
 
