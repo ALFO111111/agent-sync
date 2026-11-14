@@ -65,19 +65,6 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 	if err != nil {
 		return err
 	}
-	state := auth.State()
-	uid := "local"
-	if mode == "official" {
-		uid = state.AccountID
-		if uid == "" {
-			return errors.New("official mode requires account login")
-		}
-		if state.RefreshToken == "" {
-			return errors.New("official mode requires refresh token")
-		}
-	}
-	topics := remotev1.TopicSet{UID: uid, HID: state.HostID, DID: state.HostID}
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	logf := func(format string, args ...any) {
@@ -115,20 +102,35 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 		}
 	}()
 
-	var token mqttlink.TokenProvider
-	if mode == "official" {
-		token = &mqttlink.HTTPTokenProvider{
-			BaseURL:      "https://agent-sync.yirenzaowusuo.cn/api",
-			RefreshToken: state.RefreshToken,
-			DeviceID:     state.HostID,
-			HostID:       state.HostID,
-		}
-	} else {
-		token = mqttlink.StaticToken{Username: username, Password: password}
-	}
-
 	backoff := time.Second
 	for ctx.Err() == nil {
+		state := auth.State()
+		uid := "local"
+		if mode == "official" {
+			uid = state.AccountID
+		}
+		topics := remotev1.TopicSet{UID: uid, HID: state.HostID, DID: state.HostID}
+
+		var token mqttlink.TokenProvider
+		if mode == "official" {
+			if state.AccountID == "" || state.RefreshToken == "" {
+				fmt.Fprintln(os.Stderr, i18n.T("等待账号登录后连接 MQTT"))
+				select {
+				case <-ctx.Done():
+				case <-time.After(time.Second):
+				}
+				continue
+			}
+			token = &mqttlink.HTTPTokenProvider{
+				BaseURL:      "https://agent-sync.yirenzaowusuo.cn/api",
+				RefreshToken: state.RefreshToken,
+				DeviceID:     state.HostID,
+				HostID:       state.HostID,
+			}
+		} else {
+			token = mqttlink.StaticToken{Username: username, Password: password}
+		}
+
 		tr, err := mqttlink.New(mqttlink.Config{
 			URL:         broker,
 			ClientID:    state.HostID,

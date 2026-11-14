@@ -54,6 +54,24 @@
             <input v-model.trim="form.broker" placeholder="wss://agent-sync.yirenzaowusuo.cn/mqtt" :disabled="form.mode === 'official'" />
             <div class="hint">{{ t('remote.brokerHint') }}</div>
           </div>
+          <template v-if="form.mode === 'official'">
+            <div v-if="!auth.loggedIn" class="form-row wide">
+              <label>{{ t('remote.login') }}</label>
+              <div class="row wrap">
+                <input v-model.trim="auth.email" type="email" autocomplete="username" placeholder="邮箱" />
+                <input v-model="auth.password" type="password" autocomplete="current-password" placeholder="密码" />
+                <button class="primary" :disabled="authBusy" @click="login">{{ t('remote.login') }}</button>
+              </div>
+              <div class="hint">{{ t('remote.loginHint') }}</div>
+            </div>
+            <div v-else class="form-row wide">
+              <label>{{ t('remote.account') }}</label>
+              <div class="row wrap">
+                <span class="mono">{{ auth.accountId }}</span>
+                <button class="sm ghost" :disabled="authBusy" @click="logout">{{ t('remote.logout') }}</button>
+              </div>
+            </div>
+          </template>
           <template v-if="form.mode === 'selfhost'">
             <div class="form-row">
               <label>{{ t('remote.username') }}</label>
@@ -200,6 +218,8 @@ const { notice, ok, fail } = useNotice()
 
 const st = ref({ running: false, pending: [], devices: [], active: [] })
 const form = ref({ mode: 'selfhost', broker: '', username: '', password: '', name: '', claudeBin: '', bin: '', proxy: '' })
+const auth = ref({ loggedIn: false, accountId: '', email: '', password: '' })
+const authBusy = ref(false)
 const busy = ref(false)
 const err = ref('')
 const saved = ref(false)
@@ -224,8 +244,48 @@ const when = (iso) => fromNow(Date.parse(iso) || 0)
 async function loadConfig() {
   try {
     form.value = await api.GetRemoteConfig()
+    if (form.value.mode === 'official' && !form.value.broker) {
+      form.value.broker = 'https://agent-sync.yirenzaowusuo.cn/mqtt'
+    }
   } catch (e) {
     err.value = String(e)
+  }
+}
+
+async function loadAuth() {
+  try {
+    const a = await api.RemoteAuthStatus()
+    auth.value.loggedIn = !!a.loggedIn
+    auth.value.accountId = a.accountId || ''
+  } catch {
+    auth.value.loggedIn = false
+  }
+}
+
+async function login() {
+  authBusy.value = true
+  try {
+    await api.LoginRemote(auth.value.email, auth.value.password)
+    auth.value.password = ''
+    await loadAuth()
+    ok(t('remote.loggedIn'))
+  } catch (e) {
+    fail(String(e))
+  } finally {
+    authBusy.value = false
+  }
+}
+
+async function logout() {
+  authBusy.value = true
+  try {
+    await api.LogoutRemote()
+    await loadAuth()
+    ok(t('remote.loggedOut'))
+  } catch (e) {
+    fail(String(e))
+  } finally {
+    authBusy.value = false
   }
 }
 
@@ -259,6 +319,10 @@ function cancelEdit() {
 async function start() {
   if (!form.value.broker) {
     fail(t('remote.needConfig'))
+    return
+  }
+  if (form.value.mode === 'official' && !auth.value.loggedIn) {
+    fail(t('remote.needLogin'))
     return
   }
   busy.value = true
@@ -416,6 +480,7 @@ function schedule() {
 onActivated(async () => {
   active = true
   await loadConfig()
+  await loadAuth()
   await refresh()
   schedule()
 })

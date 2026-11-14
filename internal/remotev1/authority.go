@@ -179,6 +179,24 @@ func (a *Authority) State() State {
 	return *a.state
 }
 
+// SetAccount 保存官方模式的账号和 refresh token（加密状态文件）。
+func (a *Authority) SetAccount(accountID, refreshToken string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.state.AccountID = accountID
+	a.state.RefreshToken = refreshToken
+	return a.saveLocked()
+}
+
+// Logout 清除官方模式账号信息。
+func (a *Authority) Logout() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.state.AccountID = ""
+	a.state.RefreshToken = ""
+	return a.saveLocked()
+}
+
 func (a *Authority) saveLocked() error {
 	if a.store == nil {
 		return nil

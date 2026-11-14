@@ -2,10 +2,12 @@ package service
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -39,6 +41,8 @@ type RemoteStatus struct {
 	Relay          string          `json:"relay,omitempty"`
 	Broker         string          `json:"broker,omitempty"`
 	Mode           string          `json:"mode,omitempty"`
+	AccountID      string          `json:"accountId,omitempty"`
+	LoggedIn       bool            `json:"loggedIn,omitempty"`
 	Pending        []RemotePending `json:"pending,omitempty"`
 	Devices        []RemoteDevice  `json:"devices,omitempty"`
 	Active         []RemoteActive  `json:"active,omitempty"`
@@ -116,11 +120,13 @@ func RemoteDir() string {
 }
 
 type remoteRequest struct {
-	Token string `json:"token"`
-	Cmd   string `json:"cmd"`
-	ID    string `json:"id,omitempty"`
-	Ref   string `json:"ref,omitempty"`
-	Name  string `json:"name,omitempty"`
+	Token        string `json:"token"`
+	Cmd          string `json:"cmd"`
+	ID           string `json:"id,omitempty"`
+	Ref          string `json:"ref,omitempty"`
+	Name         string `json:"name,omitempty"`
+	AccountID    string `json:"accountId,omitempty"`
+	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
 type remoteResponse struct {
@@ -135,6 +141,8 @@ type remoteResponse struct {
 	Relay      string          `json:"relay,omitempty"`
 	Broker     string          `json:"broker,omitempty"`
 	Mode       string          `json:"mode,omitempty"`
+	AccountID  string          `json:"accountId,omitempty"`
+	LoggedIn   bool            `json:"loggedIn,omitempty"`
 	Version    string          `json:"version,omitempty"`
 	BuildID    string          `json:"buildID,omitempty"`
 	PID        int             `json:"pid,omitempty"`
@@ -252,6 +260,8 @@ func GetRemoteStatus(cfg *config.Config) RemoteStatus {
 		st.Broker = resp.Relay
 	}
 	st.Mode = resp.Mode
+	st.AccountID = resp.AccountID
+	st.LoggedIn = resp.LoggedIn
 	if list, err := remoteCall(dir, "pending", 5*time.Second); err == nil {
 		st.Pending = list.Pending
 		for i := range st.Pending {
@@ -319,6 +329,65 @@ func SaveRemoteConfig(rc RemoteConfig) error {
 	// 空值才代表自动；显式选择的路径应原样保留。
 	cfg.RemoteBin = strings.TrimSpace(rc.Bin)
 	return config.Save(cfg)
+}
+
+const remoteAuthBase = "https://agent-sync.yirenzaowusuo.cn/api"
+
+// LoginRemote 登录官方账号，并把账号信息交给本机 host 加密保存。
+func LoginRemote(email, password string) error {
+	body, _ := json.Marshal(map[string]string{"email": email, "password": password})
+	req, err := http.NewRequest(http.MethodPost, remoteAuthBase+"/v1/auth/login", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return i18n.Err("登录失败：%s", resp.Status)
+	}
+	var out struct {
+		AccountID    string `json:"accountId"`
+		RefreshToken string `json:"refreshToken"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return err
+	}
+	if out.AccountID == "" || out.RefreshToken == "" {
+		return i18n.Err("登录响应缺少账号信息")
+	}
+	st, err := remoteDial(RemoteDir(), remoteRequest{Cmd: "account", AccountID: out.AccountID, RefreshToken: out.RefreshToken}, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	if !st.OK {
+		return errors.New(st.Error)
+	}
+	return nil
+}
+
+// LogoutRemote 清除本机 host 保存的账号信息。
+func LogoutRemote() error {
+	_, err := remoteCall(RemoteDir(), "logout", 5*time.Second)
+	return err
+}
+
+// RemoteAuth 是官方账号的登录状态。
+type RemoteAuth struct {
+	AccountID string `json:"accountId"`
+	LoggedIn  bool   `json:"loggedIn"`
+}
+
+// RemoteAuthStatus 返回当前登录账号。
+func RemoteAuthStatus() (RemoteAuth, error) {
+	st, err := remoteCall(RemoteDir(), "authstatus", 5*time.Second)
+	if err != nil {
+		return RemoteAuth{}, err
+	}
+	return RemoteAuth{AccountID: st.AccountID, LoggedIn: st.LoggedIn}, nil
 }
 
 // RemoteEnsure 在未运行且已配置中转地址时启动主机组件。

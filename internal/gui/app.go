@@ -44,6 +44,7 @@ import (
 //	日志     ReadLog  ClearLog  OpenLogFolder
 //	手机遥控 GetRemoteConfig  SaveRemoteConfig  GetRemoteStatus  StartRemote  StopRemote
 //	         CreateRemoteInvite  DecideRemote  RenameRemote  RevokeRemote  StopRemoteSession  RotateRemoteKey  RemoveRemoteDevice
+//	         LoginRemote  LogoutRemote  RemoteAuthStatus
 //	向导     DefaultDeviceName  Initialize
 //	更新     GetUpdateState  CheckUpdate  InstallUpdate（+ 事件 "update"、"update-progress"）  SkipUpdate  SetAutoUpdateCheck
 type App struct {
@@ -506,6 +507,19 @@ func (a *App) StartRemote() error {
 }
 
 func (a *App) StopRemote() error { return service.RemoteStop() }
+
+// LoginRemote 登录官方账号；账号信息由 host 加密保存。
+func (a *App) LoginRemote(email, password string) error {
+	return service.LoginRemote(email, password)
+}
+
+// LogoutRemote 退出官方账号。
+func (a *App) LogoutRemote() error { return service.LogoutRemote() }
+
+// RemoteAuthStatus 返回当前登录账号和登录状态。
+func (a *App) RemoteAuthStatus() (service.RemoteAuth, error) {
+	return service.RemoteAuthStatus()
+}
 
 func (a *App) CreateRemoteInvite() (*service.RemoteInvitation, error) {
 	cfg, err := config.Load()
