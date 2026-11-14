@@ -132,6 +132,25 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 			token = mqttlink.StaticToken{Username: username, Password: password}
 		}
 
+		if mode == "official" {
+			identity, err := remotev1.IdentityFromBase64(state.PrivateKey)
+			if err != nil {
+				return err
+			}
+			ac := remotev1.NewAuthClient("https://agent-sync.yirenzaowusuo.cn/api", state.RefreshToken)
+			if err := ac.RegisterHost(ctx, state.HostID, hostName, identity.PublicBase64()); err != nil {
+				logf("register host: %v", err)
+				select {
+				case <-ctx.Done():
+				case <-time.After(backoff):
+				}
+				continue
+			}
+			host.Auth = ac
+		} else {
+			host.Auth = nil
+		}
+
 		tr, err := mqttlink.New(mqttlink.Config{
 			URL:         broker,
 			ClientID:    state.HostID,

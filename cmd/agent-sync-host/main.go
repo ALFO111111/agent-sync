@@ -93,6 +93,38 @@ func run(args []string) int {
 		}
 		return 0
 
+	case "account":
+		if len(rest) < 2 {
+			usage()
+			return 2
+		}
+		dir := defaultStateDir()
+		for i := 2; i < len(rest); i++ {
+			if rest[i] == "-state" && i+1 < len(rest) {
+				dir = rest[i+1]
+			}
+		}
+		resp, err := sendControl(dir, ctlRequest{Cmd: "account", AccountID: rest[0], RefreshToken: rest[1]})
+		if err != nil || !resp.OK {
+			fmt.Fprintln(os.Stderr, i18n.T("命令失败：%s", resp.Error))
+			return 1
+		}
+		fmt.Println(i18n.T("账号已保存"))
+		return 0
+	case "logout":
+		dir := defaultStateDir()
+		for i := 0; i < len(rest); i++ {
+			if rest[i] == "-state" && i+1 < len(rest) {
+				dir = rest[i+1]
+			}
+		}
+		resp, err := sendControl(dir, ctlRequest{Cmd: "logout"})
+		if err != nil || !resp.OK {
+			fmt.Fprintln(os.Stderr, i18n.T("命令失败：%s", resp.Error))
+			return 1
+		}
+		fmt.Println(i18n.T("已退出账号"))
+		return 0
 	case "invite", "pending", "devices", "status", "quit", "approve", "deny", "revoke", "rename", "sessions", "session-stop", "rotate-key", "remove-device":
 		// 允许 -state/-lang 出现在任意位置（例如 approve ID -state DIR）。
 		dir := defaultStateDir()
@@ -137,6 +169,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  agent-sync-host version")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host run -broker wss://host/mqtt [-mode official|selfhost] [-user U -pass P] [-name NAME] [-state DIR] [-lang zh-CN|en]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host invite|pending|devices|status|quit [-state DIR]")
+	fmt.Fprintln(os.Stderr, "  agent-sync-host account <accountId> <sessionToken> [-state DIR]")
+	fmt.Fprintln(os.Stderr, "  agent-sync-host logout [-state DIR]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host approve|deny <requestID> [-state DIR]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host revoke <deviceID|fingerprint> [-state DIR]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host sessions | session-stop <key|sessionId> [-state DIR]")

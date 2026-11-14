@@ -358,6 +358,8 @@ Options:
 	"未命名设备":           "Unnamed device",
 	"没有活动会话":          "No active sessions",
 	"已结束会话":           "Session stopped",
+	"账号已保存":  "Account saved",
+	"已退出账号":  "Signed out",
 	"已更换加密密钥，所有手机需要重新配对":              "Encryption key rotated; all phones must pair again",
 	"已删除设备记录":                         "Device record deleted",
 	"Broker 地址格式不对":                    "Invalid broker address",

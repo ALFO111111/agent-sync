@@ -16,6 +16,8 @@ type Host struct {
 	Sessions SessionSink
 	Data     DataSink
 
+	Auth DeviceRegistrar // 官方模式登记手机；自建模式为 nil
+
 	mu      sync.Mutex
 	devices map[string]*deviceState
 	seqs    map[string]uint64
