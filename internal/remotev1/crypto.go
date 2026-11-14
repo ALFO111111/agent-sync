@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	// MaxPlain 是加密前单条消息的上限；base64 后必须仍能装进 MaxFrame。
-	MaxPlain  = 11 * 1024
+	// MaxPlain 是加密前单条消息的上限；64 KiB 允许附件按 64 KiB 分块。
+	MaxPlain  = 64 * 1024
 	NonceSize = 12
 	KeySize   = 32
 	tagSize   = 16
