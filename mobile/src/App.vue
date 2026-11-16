@@ -327,9 +327,9 @@ async function credentialsFor(hostId, did, scope, opts = {}) {
 
 async function doPair(invitation) {
   if (!invitation?.hostId || !invitation?.contentKey) throw new Error('邀请格式不对')
-  if (invitation.mode === 'selfhost' && conn.value.mode !== 'selfhost') {
+  if (invitation.mode === 'selfhost') {
     conn.value.mode = 'selfhost'
-    if (!conn.value.url) conn.value.url = invitation.url || ''
+    if (invitation.url) conn.value.url = invitation.url
     if (invitation.mqttUser) {
       conn.value.username = invitation.mqttUser
       conn.value.password = invitation.mqttPassword || ''
