@@ -70,12 +70,14 @@ type Invitation struct {
 	// 官方模式的短期配对凭据；手机扫码后用它连 Broker 的 pair 主题，不需要登录账号。
 	MQTTUser     string `json:"mqttUser,omitempty"`
 	MQTTPassword string `json:"mqttPassword,omitempty"`
+	Mode         string `json:"mode,omitempty"`
 }
 
 // Validate 只做结构校验；URL 必须是 wss（自建也建议 wss）。
 func (i Invitation) Validate() error {
 	u, err := url.Parse(i.URL)
-	if err != nil || u.Scheme != "wss" || u.Host == "" || u.User != nil ||
+	schemeOK := err == nil && (u.Scheme == "wss" || (i.Mode == "selfhost" && u.Scheme == "ws"))
+	if !schemeOK || u.Host == "" || u.User != nil ||
 		u.RawQuery != "" || u.Fragment != "" || u.Path != "/mqtt" {
 		return ErrDenied
 	}

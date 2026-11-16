@@ -123,6 +123,7 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 		if err != nil {
 			return ctlResponse{Error: err.Error()}
 		}
+		inv.Mode = d.mode
 		if d.host.Auth != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			user, pass, err := d.host.Auth.PairToken(ctx, inv.HostID)

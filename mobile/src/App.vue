@@ -320,6 +320,12 @@ async function credentialsFor(hostId, did, scope, opts = {}) {
 
 async function doPair(invitation) {
   if (!invitation?.hostId || !invitation?.contentKey) throw new Error('邀请格式不对')
+  if (invitation.mode === 'selfhost' && conn.value.mode !== 'selfhost') {
+    conn.value.mode = 'selfhost'
+    if (!conn.value.url) conn.value.url = invitation.url || ''
+    await saveConn()
+    if (!conn.value.username) throw new Error('这是自建 Broker 的二维码，请先在设置里填写 Mosquitto 的用户名和密码（password_file）')
+  }
   state.value = 'connecting'
   message.value = '正在连接 Broker…'
   const did = fingerprint(device.value.publicKey)
