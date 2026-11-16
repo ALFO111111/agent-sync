@@ -856,7 +856,13 @@ function sendChat() {
     attachments.value = []
     currentAssistant = null
     generating.value = true
-    session.sendTurn(sessionKey.value, text, ids)
+    try {
+      await session.sendTurn(sessionKey.value, text, ids)
+    } catch (err) {
+      generating.value = false
+      chat.value.push({ role: 'assistant', text: `消息发送失败：${err.message || err}` })
+      throw err
+    }
     if (chatInputEl.value) chatInputEl.value.style.height = 'auto'
     scrollChat()
   })
@@ -1398,57 +1404,6 @@ async function pickGallery() {
               </button>
             </div>
           </div>
-        </div>
-
-        <div class="section-title">连接方式</div>
-        <div class="card">
-          <div class="setting-row">
-            <span>模式</span>
-            <div class="segmented small">
-              <button :class="{ on: conn.mode === 'official' }" @click="conn.mode = 'official'">官方</button>
-              <button :class="{ on: conn.mode === 'selfhost' }" @click="conn.mode = 'selfhost'">自建</button>
-            </div>
-          </div>
-
-          <template v-if="conn.mode === 'official'">
-            <div class="setting-col">
-              <label>账号</label>
-              <div class="row wrap">
-                <span v-if="auth.accountId" class="muted small">已登录 {{ auth.accountId.slice(0, 8) }}</span>
-                <span v-else class="muted small">手机通常不需要登录：电脑生成二维码后直接扫码配对。注册请去官网。</span>
-              </div>
-            </div>
-            <div class="setting-col">
-              <label>用户名</label>
-              <input v-model.trim="auth.username" autocomplete="username" placeholder="3–32 位字母数字和 _.-" />
-            </div>
-            <div class="setting-col">
-              <label>密码</label>
-              <input v-model="auth.password" type="password" autocomplete="current-password" placeholder="至少 10 位" />
-            </div>
-            <div class="row wrap">
-              <button class="pill" :disabled="authBusy" @click="submitAuthWrap">
-                {{ authBusy ? '登录中…' : '登录' }}
-              </button>
-              <button class="pill" @click="openRegister">去官网注册</button>
-            </div>
-          </template>
-
-          <template v-else>
-            <div class="setting-col">
-              <label>Broker 地址</label>
-              <input v-model.trim="conn.url" placeholder="wss://agent-sync.yirenzaowusuo.cn/mqtt" />
-            </div>
-            <div class="setting-col">
-              <label>用户名</label>
-              <input v-model.trim="conn.username" autocomplete="username" />
-            </div>
-            <div class="setting-col">
-              <label>密码</label>
-              <input v-model="conn.password" type="password" autocomplete="current-password" />
-            </div>
-          </template>
-          <button class="pill" @click="saveConn">保存连接设置</button>
         </div>
 
         <div class="section-title">电脑</div>

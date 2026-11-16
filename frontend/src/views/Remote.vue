@@ -12,10 +12,8 @@
         </div>
       </div>
       <div class="muted small">{{ t('remote.subtitle') }}</div>
-      <div class="muted small mt">{{ t('remote.encryptedHint') }}</div>
       <div v-if="st.installError" class="err-box mt">{{ t('remote.installFailed', { error: st.installError }) }}</div>
       <div v-if="st.needsRestart" class="warn-box mt">{{ t('remote.needsRestart') }}</div>
-      <div v-if="st.running" class="muted small mt">{{ t('remote.runningVersion', { version: st.version || t('remote.legacyVersion'), build: st.buildID || '—' }) }}</div>
 
       <template v-if="!editing">
         <div v-if="st.running" class="info-grid">
@@ -23,8 +21,7 @@
           <div><div class="k">{{ t('remote.brokerAddr') }}</div><div class="v mono">{{ st.broker || '—' }}</div></div>
           <div class="wide"><div class="k">{{ t('remote.hostId') }}</div><div class="v mono ellipsis">{{ st.hostId || '—' }}</div></div>
         </div>
-        <div v-else-if="st.binPath" class="muted small mt">{{ t('remote.binFound', { path: st.binPath }) }}</div>
-        <div v-else class="err-box mt">{{ t('remote.binMissing') }}</div>
+        <div v-else class="err-box mt">{{ t('remote.hostUnavailable') }}</div>
 
         <div class="row wrap mt">
           <button v-if="!st.running" class="primary" :disabled="busy" @click="start">{{ busy ? t('common.working') : t('remote.start') }}</button>
@@ -47,13 +44,10 @@
               <option value="official">{{ t('remote.modeOfficial') }}</option>
               <option value="selfhost">{{ t('remote.modeSelfHost') }}</option>
             </select>
-            <div class="hint">{{ t('remote.modeHint') }}</div>
           </div>
           <div class="form-row wide">
             <label>{{ t('remote.broker') }}</label>
             <input v-model.trim="form.broker" placeholder="wss://agent-sync.yirenzaowusuo.cn/mqtt" :disabled="form.mode === 'official'" />
-            <div class="hint">{{ t('remote.brokerHint') }}</div>
-            <div v-if="form.mode === 'selfhost'" class="hint">{{ t('remote.selfhostBrokerHint') }}</div>
           </div>
           <template v-if="form.mode === 'official'">
             <div v-if="!auth.loggedIn" class="form-row wide">
@@ -66,7 +60,6 @@
                 </button>
               </div>
               <div class="hint">{{ t('remote.loginCredentialHint') }}</div>
-              <div class="hint">{{ t('remote.loginHint') }}</div>
               <div v-if="authError" class="err-box mt">{{ authError }}</div>
               <div class="hint">
                 <a href="#" @click.prevent="openRegister">{{ t('remote.noAccount') }}</a>
@@ -79,19 +72,16 @@
                 <span class="mono">{{ auth.accountId }}</span>
                 <button class="sm ghost" :disabled="authBusy" @click="logout">{{ t('remote.logout') }}</button>
               </div>
-              <div class="hint">{{ t('remote.loggedInHint') }}</div>
             </div>
           </template>
           <template v-if="form.mode === 'selfhost'">
             <div class="form-row">
               <label>{{ t('remote.username') }}</label>
               <input v-model.trim="form.username" autocomplete="username" />
-              <div class="hint">{{ t('remote.usernameHint') }}</div>
             </div>
             <div class="form-row">
               <label>{{ t('remote.password') }}</label>
               <input v-model="form.password" type="password" autocomplete="current-password" />
-              <div class="hint">{{ t('remote.passwordHint') }}</div>
             </div>
             <div class="form-row wide">
               <div class="row wrap">
@@ -105,27 +95,12 @@
           <div class="form-row">
             <label>{{ t('remote.proxy') }}</label>
             <input v-model.trim="form.proxy" placeholder="http://127.0.0.1:7890" />
-            <div class="hint">{{ t('remote.proxyHint') }}</div>
-          </div>
-          <div class="form-row">
-            <label>{{ t('remote.claudeBin') }}</label>
-            <input v-model.trim="form.claudeBin" :placeholder="t('remote.auto')" />
-            <div class="hint">{{ t('remote.claudeBinHint') }}</div>
-          </div>
-          <div class="form-row">
-            <label>{{ t('remote.bin') }}</label>
-            <input v-model.trim="form.bin" :placeholder="st.binPath || t('remote.auto')" />
-            <div class="hint">{{ t('remote.binHint') }}</div>
           </div>
         </div>
         <div class="row wrap mt">
           <button class="primary" :disabled="busy" @click="saveConfig">{{ t('remote.save') }}</button>
           <button class="ghost" :disabled="busy" @click="cancelEdit">{{ t('common.cancel') }}</button>
           <span v-if="saved" class="ok small">{{ t('remote.saved') }}</span>
-        </div>
-        <div class="row wrap mt">
-          <button class="danger" :disabled="busy" @click="rotateKey">{{ t('remote.rotateKey') }}</button>
-          <span class="muted small">{{ t('remote.rotateKeyHint') }}</span>
         </div>
       </template>
 
@@ -494,20 +469,6 @@ async function saveConfig() {
     await loadConfig()
     editing.value = false
     ok(restart ? t('remote.savedOk') : t('remote.saved'))
-  } catch (e) {
-    fail(String(e))
-  } finally {
-    busy.value = false
-  }
-}
-
-async function rotateKey() {
-  if (!(await api.Confirm(t('remote.rotateKeyTitle'), t('remote.rotateKeyConfirm')))) return
-  busy.value = true
-  try {
-    await api.RotateRemoteKey()
-    await refresh()
-    ok(t('remote.rotateKeyDone'))
   } catch (e) {
     fail(String(e))
   } finally {
