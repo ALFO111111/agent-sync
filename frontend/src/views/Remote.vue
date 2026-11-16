@@ -65,6 +65,7 @@
                   {{ authBusy ? t('remote.loggingIn') : t('remote.login') }}
                 </button>
               </div>
+              <div class="hint">{{ t('remote.loginCredentialHint') }}</div>
               <div class="hint">{{ t('remote.loginHint') }}</div>
               <div v-if="authError" class="err-box mt">{{ authError }}</div>
               <div class="hint">
@@ -287,7 +288,7 @@ async function submitAuth() {
   authError.value = ''
   authBusy.value = true
   try {
-    await api.LoginRemote(auth.value.username, auth.value.password)
+    await api.LoginRemote(auth.value.username, auth.value.password, form.value.broker || 'wss://agent-sync.yirenzaowusuo.cn/mqtt')
     auth.value.password = ''
     await loadAuth()
     ok(t('remote.loginSuccess', { account: auth.value.accountId || auth.value.username }))

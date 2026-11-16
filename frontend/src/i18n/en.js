@@ -401,6 +401,7 @@ export default {
     loggedInHint: 'Signed in. The client will fetch MQTT credentials automatically.',
     accountForm: 'Account',
     loginHint: 'Username 3–32 characters, password at least 10. Register on the website; the client only signs in.',
+    loginCredentialHint: 'Use your website account password here, not the MQTT username/password from Connections.',
     logout: 'Sign out',
     account: 'Signed in as',
     loggedIn: 'Signed in',

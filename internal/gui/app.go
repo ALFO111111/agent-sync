@@ -508,9 +508,9 @@ func (a *App) StartRemote() error {
 
 func (a *App) StopRemote() error { return service.RemoteStop() }
 
-// LoginRemote 登录官方账号；账号信息由 host 加密保存。
-func (a *App) LoginRemote(username, password string) error {
-	return service.LoginRemote(username, password)
+// LoginRemote 登录官方账号；账号信息由 host 加密保存。host 未运行时会自动启动。
+func (a *App) LoginRemote(username, password, broker string) error {
+	return service.LoginRemote(username, password, broker)
 }
 
 // TestRemoteBroker 测试自建 Broker 的地址和用户名密码。

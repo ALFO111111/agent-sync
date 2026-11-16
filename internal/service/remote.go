@@ -326,10 +326,58 @@ func SaveRemoteConfig(rc RemoteConfig) error {
 }
 
 const remoteAuthBase = "https://agent-sync.yirenzaowusuo.cn/api"
+const defaultOfficialBroker = "wss://agent-sync.yirenzaowusuo.cn/mqtt"
 
-// LoginRemote 登录官方账号，并把账号信息交给本机 host 加密保存。
-func LoginRemote(username, password string) error {
-	return authRequest(username, password)
+// LoginRemote 登录官方账号。如果本机 host 还没启动，会先用官方默认配置启动它，
+// 否则首次登录会卡在“remote host is not running”。
+func LoginRemote(username, password, broker string) error {
+	dir := RemoteDir()
+	if st, err := remoteCall(dir, "status", 5*time.Second); err == nil && st.Mode == "selfhost" {
+		return i18n.Err("自建模式正在运行，请先停止再登录官方账号")
+	}
+	accountID, token, err := loginAccount(username, password)
+	if err != nil {
+		return err
+	}
+	if err := ensureOfficialRemote(broker); err != nil {
+		return err
+	}
+	st, err := remoteDial(dir, remoteRequest{Cmd: "account", AccountID: accountID, RefreshToken: token}, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	if !st.OK {
+		return errors.New(st.Error)
+	}
+	return nil
+}
+
+// ensureOfficialRemote 保证本机 host 以官方模式运行；首次登录时自动启动。
+func ensureOfficialRemote(broker string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	broker = strings.TrimSpace(broker)
+	if broker == "" {
+		broker = cfg.RemoteBroker
+	}
+	if broker == "" {
+		broker = defaultOfficialBroker
+	}
+	broker, err = NormalizeBrokerURL(broker)
+	if err != nil {
+		return err
+	}
+	if _, err := remoteCall(RemoteDir(), "status", 5*time.Second); err == nil {
+		return nil // 已在运行；模式由调用方事先检查过
+	}
+	cfg.RemoteMode = "official"
+	cfg.RemoteBroker = broker
+	if err := config.Save(cfg); err != nil {
+		return err
+	}
+	return RemoteEnsure(cfg)
 }
 
 // TestRemoteBroker 用当前填写的地址和用户名密码连接一次 Broker，用于自建模式的“测试连接”。
@@ -354,17 +402,17 @@ func TestRemoteBroker(rc RemoteConfig) error {
 	return nil
 }
 
-func authRequest(username, password string) error {
+func loginAccount(username, password string) (accountID, token string, err error) {
 	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
 	req, err := http.NewRequest(http.MethodPost, remoteAuthBase+"/v1/auth/login", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return i18n.Err("无法连接账号服务，请检查网络")
+		return "", "", i18n.Err("无法连接账号服务，请检查网络")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
@@ -376,21 +424,23 @@ func authRequest(username, password string) error {
 		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
 		switch apiErr.Error {
 		case "invalid_credentials":
-			return i18n.Err("用户名或密码错误")
+			return "", "", i18n.Err("用户名或密码错误")
 		case "account_locked":
 			if apiErr.RetryAfter > 0 {
-				return i18n.Err("连续失败过多，已锁定 %d 分钟", (apiErr.RetryAfter+59)/60)
+				return "", "", i18n.Err("连续失败过多，已锁定 %d 分钟", (apiErr.RetryAfter+59)/60)
 			}
-			return i18n.Err("账号已锁定，请稍后再试")
+			return "", "", i18n.Err("账号已锁定，请稍后再试")
 		case "account_disabled":
-			return i18n.Err("账号已停用")
+			return "", "", i18n.Err("账号已停用")
 		case "rate_limited":
-			return i18n.Err("操作太频繁，请稍后再试")
+			return "", "", i18n.Err("操作太频繁，请稍后再试")
+		case "mqtt_password_used":
+			return "", "", i18n.Err("这是 MQTT 密码，不是账号密码；请用注册时的密码登录")
 		}
 		if apiErr.Message != "" {
-			return errors.New(apiErr.Message)
+			return "", "", errors.New(apiErr.Message)
 		}
-		return i18n.Err("账号请求失败：%s", resp.Status)
+		return "", "", i18n.Err("账号请求失败：%s", resp.Status)
 	}
 	var out struct {
 		AccountID    string `json:"accountId"`
@@ -398,23 +448,16 @@ func authRequest(username, password string) error {
 		RefreshToken string `json:"refreshToken"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return err
+		return "", "", err
 	}
-	token := out.SessionToken
+	token = out.SessionToken
 	if token == "" {
 		token = out.RefreshToken
 	}
 	if out.AccountID == "" || token == "" {
-		return i18n.Err("登录响应缺少账号信息")
+		return "", "", i18n.Err("登录响应缺少账号信息")
 	}
-	st, err := remoteDial(RemoteDir(), remoteRequest{Cmd: "account", AccountID: out.AccountID, RefreshToken: token}, 5*time.Second)
-	if err != nil {
-		return err
-	}
-	if !st.OK {
-		return errors.New(st.Error)
-	}
-	return nil
+	return out.AccountID, token, nil
 }
 
 // LogoutRemote 清除本机 host 保存的账号信息。

@@ -372,6 +372,8 @@ Options:
 	"账号已停用":                           "Account disabled",
 	"操作太频繁，请稍后再试":                    "Too many requests; try again later",
 	"连接失败：%v":                        "Connection failed: %v",
+	"自建模式正在运行，请先停止再登录官方账号":        "The self-hosted mode is running; stop it before signing in to the official account",
+	"这是 MQTT 密码，不是账号密码；请用注册时的密码登录":   "This is the MQTT password, not your account password. Use the password you registered with.",
 	"登录响应缺少账号信息":                     "Sign-in response is missing the account",
 	"正在重连 MQTT（%s）":                   "Reconnecting MQTT (%s)",
 	"等待账号登录后连接 MQTT":                  "Waiting for sign-in before connecting MQTT",

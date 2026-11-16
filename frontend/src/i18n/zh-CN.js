@@ -400,6 +400,7 @@ export default {
     loggedInHint: '已登录，客户端会自动获取 MQTT 凭据。',
     accountForm: '账号',
     loginHint: '用户名 3–32 位，密码至少 10 位；注册请前往官网，客户端只负责登录。',
+    loginCredentialHint: '这里填官网账号密码，不是“连接凭据”里的 MQTT 用户名密码。',
     logout: '退出登录',
     account: '已登录账号',
     loggedIn: '已登录',
