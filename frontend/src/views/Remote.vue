@@ -147,6 +147,7 @@
           <button class="sm" @click="copyInvite">{{ t('remote.copyInvite') }}</button>
         </div>
       </div>
+      <div v-if="st.mode === 'selfhost'" class="warn-box mt">{{ t('remote.selfhostInviteWarn') }}</div>
     </div>
 
     <!-- 待批准：手机第一次连进来，必须在这里点允许 -->

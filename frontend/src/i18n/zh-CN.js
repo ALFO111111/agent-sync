@@ -437,6 +437,7 @@ export default {
     inviteTitle: '扫码配对',
     inviteHint: '用手机相机扫这个码，会直接打开 App 进入配对；10 分钟内有效。电脑上点“允许”后才算连上。',
     copyInvite: '复制邀请',
+    selfhostInviteWarn: '自建二维码包含你的 Mosquitto 用户名和密码，不要截图或发给别人；配对完成后可关闭。建议给 agent-sync 单独建一个 Broker 用户。',
     copied: '已复制',
     pending: '待批准的设备',
     pendingHint: '手机第一次连进来会出现在这里',

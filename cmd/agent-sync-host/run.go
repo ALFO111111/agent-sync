@@ -20,6 +20,8 @@ type daemon struct {
 	hostName     string
 	broker       string
 	mode         string
+	mqttUser     string
+	mqttPass     string
 	controlToken string
 	sessions     *sessionService
 	cancel       context.CancelFunc
@@ -87,7 +89,7 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 		fmt.Fprintf(os.Stderr, "sessions disabled: %v\n", err)
 	}
 
-	d := &daemon{auth: auth, host: host, hostName: hostName, broker: broker, mode: mode, controlToken: remotev1.RandomToken(16), sessions: svc, cancel: cancel}
+	d := &daemon{auth: auth, host: host, hostName: hostName, broker: broker, mode: mode, mqttUser: username, mqttPass: password, controlToken: remotev1.RandomToken(16), sessions: svc, cancel: cancel}
 
 	controlErr := make(chan error, 1)
 	go func() {

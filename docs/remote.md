@@ -100,6 +100,15 @@
 
 自建不需要注册账号，也不需要部署 agent-sync-auth。只需要一个 Mosquitto，用 Mosquitto 自带的 `password_file` 建用户名密码。
 
+电脑端在「手机遥控 → 自建 Broker」里填好一次 Broker 地址、用户名、密码并启动。之后生成二维码时，这些信息会一起带进二维码/邀请文本：
+
+- **手机扫码或粘贴邀请内容即可连接，不需要在手机上填 Broker 信息**
+- 手机第一次仍需在电脑上批准配对
+- 配对成功后手机保存这组凭据，以后自动重连
+
+> [!WARNING]
+> **自建二维码里包含你的 Mosquitto 用户名和密码**，不要截图或转发。配对完成后关闭邀请窗口。建议给 agent-sync 单独建一个 Broker 用户，不要用管理员账号。
+
 完整步骤见 **[mosquitto-selfhost.md](mosquitto-selfhost.md)**，里面包含：
 
 - macOS / Linux / Docker / Windows 安装
@@ -123,14 +132,14 @@ max_packet_size 262144
 message_size_limit 262144
 ```
 
-然后在电脑端：
+电脑端填：
 
 - 连接方式：**自建 Broker**
 - Broker 地址：`ws://主机IP:8083/mqtt`
 - 用户名：`alice`
 - 密码：刚才设置的密码
 
-手机端同样填这三项。效果和官网登录一样：填用户名密码，连接成功后有明确提示。
+启动后点“邀请”，手机扫码即可；手机不需要再填这些信息。
 
 ---
 

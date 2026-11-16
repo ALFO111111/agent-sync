@@ -97,6 +97,30 @@ func TestInviteCarriesPairCredentials(t *testing.T) {
 	}
 }
 
+func TestInviteCarriesSelfhostCredentials(t *testing.T) {
+	store, err := newFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := remotev1.NewAuthority(store, "ws://192.168.1.20:8083/mqtt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := &remotev1.Host{Authority: auth}
+	d := daemon{auth: auth, host: host, hostName: "test", broker: "ws://192.168.1.20:8083/mqtt", mode: "selfhost", mqttUser: "alice", mqttPass: "secret"}
+	got := d.handle(ctlRequest{Cmd: "invite"})
+	if !got.OK {
+		t.Fatalf("invite: %+v", got)
+	}
+	inv, err := remotev1.DecodeInvitation(got.Invitation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.Mode != "selfhost" || inv.MQTTUser != "alice" || inv.MQTTPassword != "secret" {
+		t.Fatalf("selfhost invite missing credentials: %+v", inv)
+	}
+}
+
 func TestStatusIdentity(t *testing.T) {
 	store, err := newFileStore(t.TempDir())
 	if err != nil {

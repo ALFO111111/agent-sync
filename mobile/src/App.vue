@@ -304,6 +304,13 @@ async function submitAuthWrap() {
 
 async function credentialsFor(hostId, did, scope, opts = {}) {
   if (conn.value.mode !== 'official') {
+    const saved = opts.saved
+    if (saved?.mqttUser && saved?.mqttPassword) {
+      return { url: saved.broker || conn.value.url || opts.invitation?.url, username: saved.mqttUser, password: saved.mqttPassword }
+    }
+    if (scope === 'pair' && opts.invitation?.mqttUser && opts.invitation?.mqttPassword) {
+      return { url: opts.invitation.url || conn.value.url, username: opts.invitation.mqttUser, password: opts.invitation.mqttPassword }
+    }
     return { url: conn.value.url || opts.invitation?.url, username: conn.value.username, password: conn.value.password }
   }
   const saved = opts.saved
@@ -323,8 +330,12 @@ async function doPair(invitation) {
   if (invitation.mode === 'selfhost' && conn.value.mode !== 'selfhost') {
     conn.value.mode = 'selfhost'
     if (!conn.value.url) conn.value.url = invitation.url || ''
+    if (invitation.mqttUser) {
+      conn.value.username = invitation.mqttUser
+      conn.value.password = invitation.mqttPassword || ''
+    }
     await saveConn()
-    if (!conn.value.username) throw new Error('这是自建 Broker 的二维码，请先在设置里填写 Mosquitto 的用户名和密码（password_file）')
+    if (!conn.value.username) throw new Error('这是自建 Broker 的二维码，但没有带用户名密码；请让电脑端重新生成二维码')
   }
   state.value = 'connecting'
   message.value = '正在连接 Broker…'
@@ -340,8 +351,8 @@ async function doPair(invitation) {
     deviceId: did,
     e2eeKey: invitation.contentKey,
     seq: session.link.seq,
-    mqttUser: session.ready.mqttUser || '',
-    mqttPassword: session.ready.mqttPassword || '',
+    mqttUser: session.ready.mqttUser || invitation.mqttUser || '',
+    mqttPassword: session.ready.mqttPassword || invitation.mqttPassword || '',
   }
   pairings.value = upsertPairing(pairings.value, entry)
   pairing.value = entry

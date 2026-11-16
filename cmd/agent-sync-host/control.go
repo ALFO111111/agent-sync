@@ -124,7 +124,11 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 			return ctlResponse{Error: err.Error()}
 		}
 		inv.Mode = d.mode
-		if d.host.Auth != nil {
+		if d.mode == "selfhost" {
+			// 自建没有 auth 服务，二维码里直接带 Mosquitto 的用户名密码，
+			// 手机扫码/粘贴后即可连接。二维码只在电脑屏幕上短时间展示。
+			inv.MQTTUser, inv.MQTTPassword = d.mqttUser, d.mqttPass
+		} else if d.host.Auth != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			user, pass, err := d.host.Auth.PairToken(ctx, inv.HostID)
 			cancel()

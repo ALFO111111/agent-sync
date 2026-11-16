@@ -438,6 +438,7 @@ export default {
     inviteTitle: 'Scan to pair',
     inviteHint: 'Scan this with the phone camera; it opens the app and starts pairing. Valid for 10 minutes. The phone is not connected until you approve it on this computer.',
     copyInvite: 'Copy invitation',
+    selfhostInviteWarn: 'This self-hosted QR code contains your Mosquitto username and password. Do not screenshot or share it; close it after pairing. A dedicated broker user for agent-sync is recommended.',
     copied: 'Copied',
     pending: 'Pending devices',
     pendingHint: 'A phone shows up here the first time it connects',
