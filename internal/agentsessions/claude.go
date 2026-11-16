@@ -108,6 +108,7 @@ func (m *Manager) Start(cwd, resumeID, mode string) (*Runner, error) {
 		cmd = exec.Command(bin, args...)
 	}
 	cmd.Dir = cwd
+	configureProcess(cmd)
 	env := os.Environ()
 	if len(m.cfg.ExtraPATH) > 0 {
 		env = append(env, "PATH="+strings.Join(m.cfg.ExtraPATH, string(os.PathListSeparator))+string(os.PathListSeparator)+os.Getenv("PATH"))

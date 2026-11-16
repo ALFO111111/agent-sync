@@ -102,6 +102,10 @@ export class MQTTLink {
   }
 
   push(msg) {
+    if (msg.type === 'session.events' && this.onSessionEvent) {
+      for (const ev of msg.events || []) this.onSessionEvent({ ...ev, sessionKey: msg.sessionKey })
+      return
+    }
     if (msg.type === 'session.event' && this.onSessionEvent) {
       this.onSessionEvent(msg)
       return

@@ -193,6 +193,7 @@ func (r *CodexRunner) Send(text string) error {
 		cmd = exec.Command(bin, args...)
 	}
 	cmd.Dir = r.cwd
+	configureProcess(cmd)
 	env := os.Environ()
 	if len(r.config.ExtraPATH) > 0 {
 		env = append(env, "PATH="+strings.Join(r.config.ExtraPATH, string(os.PathListSeparator))+string(os.PathListSeparator)+os.Getenv("PATH"))
