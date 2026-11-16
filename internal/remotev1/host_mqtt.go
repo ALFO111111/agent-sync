@@ -117,6 +117,19 @@ func (h *Host) onMessage(ctx context.Context, tr Transport, ts TopicSet, topic s
 	h.handleEnvelope(ctx, tr, ts, did, kind, env)
 }
 
+func (h *Host) readyWithCredentials(ctx context.Context, deviceID string) Envelope {
+	env := h.readyEnvelope(deviceID)
+	if h.Auth != nil {
+		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		user, pass, err := h.Auth.MQTTCredentials(cctx, env.HostID)
+		cancel()
+		if err == nil {
+			env.MQTTUser, env.MQTTPassword = user, pass
+		}
+	}
+	return env
+}
+
 func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, did, kind string, env Envelope) {
 	hostID := h.Authority.State().HostID
 	dts := ts
@@ -169,7 +182,7 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 				return
 			}
 			st.device = device
-			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), h.readyEnvelope(device.ID), 1)
+			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), h.readyWithCredentials(ctx, device.ID), 1)
 			return
 		}
 		p, err := h.Authority.BeginPair(st.inviteID, st.inviteSecret, st.pub, st.name)
@@ -189,7 +202,7 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 						return
 					}
 					st.device = d
-					_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), h.readyEnvelope(d.ID), 1)
+					_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), h.readyWithCredentials(ctx, d.ID), 1)
 					return
 				}
 			}

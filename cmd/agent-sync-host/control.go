@@ -19,8 +19,8 @@ import (
 // ctlRequest/ctlResponse 是本地控制通道的单行 JSON 协议。
 // 通道只监听 127.0.0.1，并用随机令牌 + 0600 端口文件限制本机同用户访问。
 type ctlRequest struct {
-	Token string `json:"token"`
-	Cmd   string `json:"cmd"`
+	Token        string `json:"token"`
+	Cmd          string `json:"cmd"`
 	ID           string `json:"id,omitempty"`
 	Ref          string `json:"ref,omitempty"`
 	Name         string `json:"name,omitempty"`
@@ -122,6 +122,14 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 		inv, err := d.auth.Invite(d.hostName)
 		if err != nil {
 			return ctlResponse{Error: err.Error()}
+		}
+		if d.host.Auth != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			user, pass, err := d.host.Auth.PairToken(ctx, inv.HostID)
+			cancel()
+			if err == nil {
+				inv.MQTTUser, inv.MQTTPassword = user, pass
+			}
 		}
 		return ctlResponse{OK: true, Invitation: remotev1.EncodeInvitation(inv), HostName: d.hostName}
 	case "pending":

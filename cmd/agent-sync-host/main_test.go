@@ -61,6 +61,42 @@ func TestLifecycleLockBeforeIdentity(t *testing.T) {
 	}
 }
 
+type fakeRegistrar struct{}
+
+func (fakeRegistrar) RegisterDevice(context.Context, string, string, string, string) error {
+	return nil
+}
+func (fakeRegistrar) PairToken(context.Context, string) (string, string, error) {
+	return "pair-user", "pair-pass", nil
+}
+func (fakeRegistrar) MQTTCredentials(context.Context, string) (string, string, error) {
+	return "mqtt-user", "mqtt-pass", nil
+}
+
+func TestInviteCarriesPairCredentials(t *testing.T) {
+	store, err := newFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := remotev1.NewAuthority(store, "wss://example/mqtt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := &remotev1.Host{Authority: auth, Auth: fakeRegistrar{}}
+	d := daemon{auth: auth, host: host, hostName: "test", broker: "wss://example/mqtt", mode: "official"}
+	got := d.handle(ctlRequest{Cmd: "invite"})
+	if !got.OK {
+		t.Fatalf("invite: %+v", got)
+	}
+	inv, err := remotev1.DecodeInvitation(got.Invitation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.MQTTUser != "pair-user" || inv.MQTTPassword != "pair-pass" {
+		t.Fatalf("invite missing pair credentials: %+v", inv)
+	}
+}
+
 func TestStatusIdentity(t *testing.T) {
 	store, err := newFileStore(t.TempDir())
 	if err != nil {

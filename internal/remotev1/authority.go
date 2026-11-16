@@ -67,6 +67,9 @@ type Invitation struct {
 	HostID     string    `json:"hostId"`
 	HostName   string    `json:"hostName"`
 	Expires    time.Time `json:"expires"`
+	// 官方模式的短期配对凭据；手机扫码后用它连 Broker 的 pair 主题，不需要登录账号。
+	MQTTUser     string `json:"mqttUser,omitempty"`
+	MQTTPassword string `json:"mqttPassword,omitempty"`
 }
 
 // Validate 只做结构校验；URL 必须是 wss（自建也建议 wss）。

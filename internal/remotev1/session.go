@@ -31,6 +31,10 @@ type Envelope struct {
 	HostID   string `json:"hostId,omitempty"`
 	HostName string `json:"hostName,omitempty"`
 
+	// 配对成功后，电脑把账号的固定 MQTT 凭据通过加密通道交给手机。
+	MQTTUser     string `json:"mqttUser,omitempty"`
+	MQTTPassword string `json:"mqttPassword,omitempty"`
+
 	Data     string       `json:"data,omitempty"`
 	Error    string       `json:"error,omitempty"`
 	Devices  []DeviceInfo `json:"devices,omitempty"`

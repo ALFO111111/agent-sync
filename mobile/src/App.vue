@@ -302,9 +302,16 @@ async function submitAuthWrap() {
   }
 }
 
-async function credentialsFor(hostId, did, scope) {
+async function credentialsFor(hostId, did, scope, opts = {}) {
   if (conn.value.mode !== 'official') {
-    return { url: conn.value.url, username: conn.value.username, password: conn.value.password }
+    return { url: conn.value.url || opts.invitation?.url, username: conn.value.username, password: conn.value.password }
+  }
+  const saved = opts.saved
+  if (saved?.mqttUser && saved?.mqttPassword) {
+    return { url: saved.broker || conn.value.url || 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: saved.mqttUser, password: saved.mqttPassword }
+  }
+  if (scope === 'pair' && opts.invitation?.mqttUser && opts.invitation?.mqttPassword) {
+    return { url: opts.invitation.url || conn.value.url || 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: opts.invitation.mqttUser, password: opts.invitation.mqttPassword }
   }
   if (!auth.value.sessionToken) throw new Error('请先登录官方账号')
   const t = await mqttToken(auth.value.sessionToken, did, hostId, 'phone', scope)
@@ -316,7 +323,7 @@ async function doPair(invitation) {
   state.value = 'connecting'
   message.value = '正在连接 Broker…'
   const did = fingerprint(device.value.publicKey)
-  const creds = await credentialsFor(invitation.hostId, did, 'pair')
+  const creds = await credentialsFor(invitation.hostId, did, 'pair', { invitation })
   session = await pair(invitation, device.value, deviceName.value, onPending, creds)
   ready.value = session.ready
   const entry = {
@@ -327,6 +334,8 @@ async function doPair(invitation) {
     deviceId: did,
     e2eeKey: invitation.contentKey,
     seq: session.link.seq,
+    mqttUser: session.ready.mqttUser || '',
+    mqttPassword: session.ready.mqttPassword || '',
   }
   pairings.value = upsertPairing(pairings.value, entry)
   pairing.value = entry
@@ -352,7 +361,7 @@ async function doReconnect() {
   state.value = 'connecting'
   message.value = '正在重连…'
   const did = pairing.value.deviceId || fingerprint(device.value.publicKey)
-  const creds = await credentialsFor(pairing.value.hostId, did, 'session')
+  const creds = await credentialsFor(pairing.value.hostId, did, 'session', { saved: pairing.value })
   session = await reconnect(pairing.value, device.value, onPending, creds)
   ready.value = session.ready
   pairing.value.seq = session.link.seq
@@ -404,7 +413,7 @@ async function autoReconnect() {
       state.value = 'reconnecting'
       try {
         const did = pairing.value.deviceId || fingerprint(device.value.publicKey)
-        const creds = await credentialsFor(pairing.value.hostId, did, 'session')
+        const creds = await credentialsFor(pairing.value.hostId, did, 'session', { saved: pairing.value })
         session = await reconnect(pairing.value, device.value, onPending, creds)
         ready.value = session.ready
         pairing.value.seq = session.link.seq
@@ -1390,7 +1399,7 @@ async function pickGallery() {
               <label>账号</label>
               <div class="row wrap">
                 <span v-if="auth.accountId" class="muted small">已登录 {{ auth.accountId.slice(0, 8) }}</span>
-                <span v-else class="muted small">客户端不提供注册，请先到官网注册</span>
+                <span v-else class="muted small">手机通常不需要登录：电脑生成二维码后直接扫码配对。注册请去官网。</span>
               </div>
             </div>
             <div class="setting-col">

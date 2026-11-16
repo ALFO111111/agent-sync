@@ -12,6 +12,10 @@ import (
 // DeviceRegistrar 由官方 auth 客户端实现；自建模式为 nil。
 type DeviceRegistrar interface {
 	RegisterDevice(ctx context.Context, hostID, deviceID, name, publicKey string) error
+	// PairToken 生成只允许读写 pair 主题的短期凭据，供二维码里的手机配对使用。
+	PairToken(ctx context.Context, hostID string) (username, password string, err error)
+	// MQTTCredentials 取本账号的固定 MQTT 用户名密码，配对成功后通过加密通道交给手机。
+	MQTTCredentials(ctx context.Context, hostID string) (username, password string, err error)
 }
 
 type AuthClient struct {
@@ -25,6 +29,10 @@ func NewAuthClient(base, session string) *AuthClient {
 }
 
 func (c *AuthClient) post(ctx context.Context, path string, body any) error {
+	return c.postInto(ctx, path, body, nil)
+}
+
+func (c *AuthClient) postInto(ctx context.Context, path string, body, out any) error {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -43,7 +51,10 @@ func (c *AuthClient) post(ctx context.Context, path string, body any) error {
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("auth service: %s", resp.Status)
 	}
-	return nil
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 func (c *AuthClient) RegisterHost(ctx context.Context, hostID, name, publicKey string) error {
@@ -56,4 +67,39 @@ func (c *AuthClient) RegisterDevice(ctx context.Context, hostID, deviceID, name,
 	return c.post(ctx, "/v1/hosts/"+hostID+"/devices", map[string]string{
 		"deviceId": deviceID, "name": name, "publicKey": publicKey,
 	})
+}
+
+func (c *AuthClient) PairToken(ctx context.Context, hostID string) (string, string, error) {
+	var out struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.postInto(ctx, "/v1/mqtt/pair-token", map[string]string{"hostId": hostID}, &out); err != nil {
+		return "", "", err
+	}
+	if out.Username == "" || out.Password == "" {
+		return "", "", fmt.Errorf("auth service: empty pair credentials")
+	}
+	return out.Username, out.Password, nil
+}
+
+func (c *AuthClient) MQTTCredentials(ctx context.Context, hostID string) (string, string, error) {
+	var out struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	body := map[string]string{
+		"sessionToken": c.SessionToken,
+		"deviceId":     hostID,
+		"hostId":       hostID,
+		"role":         "host",
+		"scope":        "session",
+	}
+	if err := c.postInto(ctx, "/v1/mqtt/token", body, &out); err != nil {
+		return "", "", err
+	}
+	if out.Username == "" || out.Password == "" {
+		return "", "", fmt.Errorf("auth service: empty mqtt credentials")
+	}
+	return out.Username, out.Password, nil
 }

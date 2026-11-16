@@ -80,9 +80,9 @@ type RemoteActive struct {
 // RemoteConfig 是“手机遥控”的设置项（存在 config.json 里）。
 // Password 只在本次启动时经控制通道传给 host，不写入配置文件。
 type RemoteConfig struct {
-	Mode      string `json:"mode"`      // official / selfhost
-	Broker    string `json:"broker"`    // MQTT Broker，例如 wss://agent-sync.example.com/mqtt
-	Username  string `json:"username"`  // 自建模式用户名
+	Mode      string `json:"mode"`     // official / selfhost
+	Broker    string `json:"broker"`   // MQTT Broker，例如 wss://agent-sync.example.com/mqtt
+	Username  string `json:"username"` // 自建模式用户名
 	Password  string `json:"password,omitempty"`
 	Name      string `json:"name"`      // 电脑显示名
 	ClaudeBin string `json:"claudeBin"` // claude 可执行文件（空=自动）
@@ -858,4 +858,3 @@ func RemoteRemoveDevice(cfg *config.Config, ref string) error {
 	}
 	return nil
 }
-
