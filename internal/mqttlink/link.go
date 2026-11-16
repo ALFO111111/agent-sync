@@ -3,6 +3,7 @@ package mqttlink
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -54,8 +55,11 @@ func (l *Link) connect(ctx context.Context) error {
 	}
 	c := mqtt.NewClient(opts)
 	tok := c.Connect()
-	if !tok.WaitTimeout(10*time.Second) || tok.Error() != nil {
-		return errors.New("mqttlink: connect failed")
+	if !tok.WaitTimeout(10*time.Second) {
+		return errors.New("mqttlink: connect timeout")
+	}
+	if err := tok.Error(); err != nil {
+		return fmt.Errorf("mqttlink: connect failed: %w", err)
 	}
 	l.mu.Lock()
 	l.client = c

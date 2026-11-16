@@ -20,7 +20,7 @@ import {
   reconnect,
 } from './lib/protocol.js'
 import { secureGet, secureRemove, secureSet, storageIsSecure } from './lib/storage.js'
-import { login as authLogin, register as authRegister, mqttToken, passwordValid, usernameValid } from './lib/auth.js'
+import { login as authLogin, mqttToken, passwordValid, usernameValid } from './lib/auth.js'
 import { hostKey, pickActive, upsertPairing } from './lib/pairings.js'
 
 const state = ref('idle')
@@ -33,8 +33,8 @@ const echoText = ref('hello')
 const device = ref(null)
 const pairing = ref(null)
 const pairings = ref([])
-const conn = ref({ mode: 'selfhost', url: 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: '', password: '' })
-const auth = ref({ accountId: '', sessionToken: '', username: '', password: '', mode: 'login' })
+const conn = ref({ mode: 'official', url: 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: '', password: '' })
+const auth = ref({ accountId: '', sessionToken: '', username: '', password: '' })
 const authBusy = ref(false)
 const ready = ref(null)
 const devices = ref([])
@@ -269,15 +269,24 @@ async function loadAuth() {
 async function submitAuth() {
   if (!usernameValid(auth.value.username)) throw new Error('用户名 3–32 位，只允许字母数字和 _.-')
   if (!passwordValid(auth.value.password)) throw new Error('密码至少 10 位')
-  const out = auth.value.mode === 'register'
-    ? await authRegister(auth.value.username, auth.value.password)
-    : await authLogin(auth.value.username, auth.value.password)
+  const out = await authLogin(auth.value.username, auth.value.password)
   auth.value.accountId = out.accountId
   auth.value.sessionToken = out.sessionToken
   auth.value.password = ''
   await saveAuth()
-  message.value = auth.value.mode === 'register' ? '注册成功' : '登录成功'
+  message.value = `登录成功，账号 ${out.username || out.accountId.slice(0, 8)}`
+  notify(message.value)
   log(message.value)
+}
+
+async function openRegister() {
+  const url = 'https://agent-sync.yirenzaowusuo.cn/register'
+  try {
+    if (Capacitor.isNativePlatform()) await ExternalLinks.open({ url })
+    else window.open(url, '_blank', 'noopener,noreferrer')
+  } catch {
+    notify('无法打开浏览器，请稍后重试')
+  }
 }
 
 async function submitAuthWrap() {
@@ -286,6 +295,7 @@ async function submitAuthWrap() {
     await submitAuth()
   } catch (err) {
     message.value = err.message || String(err)
+    notify(message.value)
     log(message.value)
   } finally {
     authBusy.value = false
@@ -1379,9 +1389,8 @@ async function pickGallery() {
             <div class="setting-col">
               <label>账号</label>
               <div class="row wrap">
-                <button class="pill" :class="{ on: auth.mode === 'login' }" @click="auth.mode = 'login'">登录</button>
-                <button class="pill" :class="{ on: auth.mode === 'register' }" @click="auth.mode = 'register'">注册</button>
                 <span v-if="auth.accountId" class="muted small">已登录 {{ auth.accountId.slice(0, 8) }}</span>
+                <span v-else class="muted small">客户端不提供注册，请先到官网注册</span>
               </div>
             </div>
             <div class="setting-col">
@@ -1392,9 +1401,12 @@ async function pickGallery() {
               <label>密码</label>
               <input v-model="auth.password" type="password" autocomplete="current-password" placeholder="至少 10 位" />
             </div>
-            <button class="pill" :disabled="authBusy" @click="submitAuthWrap">
-              {{ auth.mode === 'login' ? '登录' : '注册' }}
-            </button>
+            <div class="row wrap">
+              <button class="pill" :disabled="authBusy" @click="submitAuthWrap">
+                {{ authBusy ? '登录中…' : '登录' }}
+              </button>
+              <button class="pill" @click="openRegister">去官网注册</button>
+            </div>
           </template>
 
           <template v-else>

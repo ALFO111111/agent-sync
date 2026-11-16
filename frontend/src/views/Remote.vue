@@ -59,24 +59,26 @@
             <div v-if="!auth.loggedIn" class="form-row wide">
               <label>{{ t('remote.accountForm') }}</label>
               <div class="row wrap">
-                <button class="sm" :class="{ on: auth.mode === 'login' }" @click="auth.mode = 'login'">{{ t('remote.login') }}</button>
-                <button class="sm" :class="{ on: auth.mode === 'register' }" @click="auth.mode = 'register'">{{ t('remote.register') }}</button>
-              </div>
-              <div class="row wrap">
                 <input v-model.trim="auth.username" autocomplete="username" :placeholder="t('remote.username')" />
                 <input v-model="auth.password" type="password" autocomplete="current-password" :placeholder="t('remote.password')" />
                 <button class="primary" :disabled="authBusy" @click="submitAuth">
-                  {{ auth.mode === 'login' ? t('remote.login') : t('remote.register') }}
+                  {{ authBusy ? t('remote.loggingIn') : t('remote.login') }}
                 </button>
               </div>
               <div class="hint">{{ t('remote.loginHint') }}</div>
+              <div v-if="authError" class="err-box mt">{{ authError }}</div>
+              <div class="hint">
+                <a href="#" @click.prevent="openRegister">{{ t('remote.noAccount') }}</a>
+              </div>
             </div>
             <div v-else class="form-row wide">
               <label>{{ t('remote.account') }}</label>
               <div class="row wrap">
+                <span class="badge ok">{{ t('remote.loggedIn') }}</span>
                 <span class="mono">{{ auth.accountId }}</span>
                 <button class="sm ghost" :disabled="authBusy" @click="logout">{{ t('remote.logout') }}</button>
               </div>
+              <div class="hint">{{ t('remote.loggedInHint') }}</div>
             </div>
           </template>
           <template v-if="form.mode === 'selfhost'">
@@ -89,6 +91,14 @@
               <label>{{ t('remote.password') }}</label>
               <input v-model="form.password" type="password" autocomplete="current-password" />
               <div class="hint">{{ t('remote.passwordHint') }}</div>
+            </div>
+            <div class="form-row wide">
+              <div class="row wrap">
+                <button class="sm ghost" :disabled="testBusy" @click="testBroker">
+                  {{ testBusy ? t('remote.testingConnection') : t('remote.testConnection') }}
+                </button>
+                <span v-if="testMessage" class="small" :class="testOK ? 'muted' : 'err'">{{ testMessage }}</span>
+              </div>
             </div>
           </template>
           <div class="form-row">
@@ -214,7 +224,7 @@
 <script setup>
 import { ref, onActivated, onDeactivated, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api } from '@/api'
+import { api, BrowserOpenURL } from '@/api'
 import { useNotice } from '@/composables/useNotice'
 import { fromNow } from '@/utils/format'
 import Notice from '@/components/Notice.vue'
@@ -224,9 +234,13 @@ const { t } = useI18n()
 const { notice, ok, fail } = useNotice()
 
 const st = ref({ running: false, pending: [], devices: [], active: [] })
-const form = ref({ mode: 'selfhost', broker: '', username: '', password: '', name: '', claudeBin: '', bin: '', proxy: '' })
-const auth = ref({ loggedIn: false, accountId: '', username: '', password: '', mode: 'login' })
+const form = ref({ mode: 'official', broker: '', username: '', password: '', name: '', claudeBin: '', bin: '', proxy: '' })
+const auth = ref({ loggedIn: false, accountId: '', username: '', password: '' })
 const authBusy = ref(false)
+const authError = ref('')
+const testBusy = ref(false)
+const testMessage = ref('')
+const testOK = ref(false)
 const busy = ref(false)
 const err = ref('')
 const saved = ref(false)
@@ -252,7 +266,7 @@ async function loadConfig() {
   try {
     form.value = await api.GetRemoteConfig()
     if (form.value.mode === 'official' && !form.value.broker) {
-      form.value.broker = 'https://agent-sync.yirenzaowusuo.cn/mqtt'
+      form.value.broker = 'wss://agent-sync.yirenzaowusuo.cn/mqtt'
     }
   } catch (e) {
     err.value = String(e)
@@ -270,20 +284,37 @@ async function loadAuth() {
 }
 
 async function submitAuth() {
+  authError.value = ''
   authBusy.value = true
   try {
-    if (auth.value.mode === 'register') {
-      await api.RegisterRemote(auth.value.username, auth.value.password)
-    } else {
-      await api.LoginRemote(auth.value.username, auth.value.password)
-    }
+    await api.LoginRemote(auth.value.username, auth.value.password)
     auth.value.password = ''
     await loadAuth()
-    ok(auth.value.mode === 'register' ? t('remote.registered') : t('remote.loggedIn'))
+    ok(t('remote.loginSuccess', { account: auth.value.accountId || auth.value.username }))
   } catch (e) {
+    authError.value = String(e)
     fail(String(e))
   } finally {
     authBusy.value = false
+  }
+}
+
+function openRegister() {
+  BrowserOpenURL('https://agent-sync.yirenzaowusuo.cn/register')
+}
+
+async function testBroker() {
+  testMessage.value = ''
+  testBusy.value = true
+  try {
+    await api.TestRemoteBroker({ ...form.value })
+    testOK.value = true
+    testMessage.value = t('remote.testOk')
+  } catch (e) {
+    testOK.value = false
+    testMessage.value = String(e)
+  } finally {
+    testBusy.value = false
   }
 }
 
@@ -306,7 +337,7 @@ async function refresh() {
     st.value = next
     if (next.running) {
       if (!form.value.broker) form.value.broker = next.broker || ''
-      if (!form.value.mode) form.value.mode = next.mode || 'selfhost'
+      if (!form.value.mode) form.value.mode = next.mode || 'official'
       if (!form.value.name) form.value.name = next.hostName || ''
     }
     if (!loaded) loaded = JSON.stringify(form.value)

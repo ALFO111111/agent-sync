@@ -104,6 +104,15 @@ The app checks GitHub for a new version when it opens (and once a day after that
 - On the Mac the whole app in Applications is replaced, and the background process is switched to the new version too.
 - GitHub can be hard to reach from some networks: the app uses the system proxy. If it still can't connect, download the new version from Releases.
 
+### Remote control: hosted or self-hosted
+
+**Hosted (recommended)**: register at **https://agent-sync.yirenzaowusuo.cn/register**, then sign in with the same account on the desktop and phone. The client does **not** offer registration; the sign-in form links to the website. Each account can have up to 5 computers and 2 phones. Devices register automatically after sign-in/pairing and can be renamed, revoked, or have their MQTT password reset in the user center.
+
+**Self-hosted broker**: deploy only **Mosquitto**, create a username/password with its built-in `password_file`, and enter the broker URL, username, and password in the client. No account backend and no `agent-sync-auth` required.
+
+- Full guide (Chinese): [docs/remote.md](docs/remote.md)
+- Mosquitto self-hosting + AI prompt (Chinese): [docs/mosquitto-selfhost.md](docs/mosquitto-selfhost.md)
+
 <a id="rename"></a>
 ### Upgrading from claude-code-sync
 

@@ -44,7 +44,7 @@ import (
 //	日志     ReadLog  ClearLog  OpenLogFolder
 //	手机遥控 GetRemoteConfig  SaveRemoteConfig  GetRemoteStatus  StartRemote  StopRemote
 //	         CreateRemoteInvite  DecideRemote  RenameRemote  RevokeRemote  StopRemoteSession  RotateRemoteKey  RemoveRemoteDevice
-//	         LoginRemote  RegisterRemote  LogoutRemote  RemoteAuthStatus
+//	         LoginRemote  LogoutRemote  RemoteAuthStatus  TestRemoteBroker
 //	向导     DefaultDeviceName  Initialize
 //	更新     GetUpdateState  CheckUpdate  InstallUpdate（+ 事件 "update"、"update-progress"）  SkipUpdate  SetAutoUpdateCheck
 type App struct {
@@ -513,9 +513,9 @@ func (a *App) LoginRemote(username, password string) error {
 	return service.LoginRemote(username, password)
 }
 
-// RegisterRemote 开放注册并自动保存会话。
-func (a *App) RegisterRemote(username, password string) error {
-	return service.RegisterRemote(username, password)
+// TestRemoteBroker 测试自建 Broker 的地址和用户名密码。
+func (a *App) TestRemoteBroker(cfg service.RemoteConfig) error {
+	return service.TestRemoteBroker(cfg)
 }
 
 // LogoutRemote 退出官方账号。

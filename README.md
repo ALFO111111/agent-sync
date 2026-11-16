@@ -99,7 +99,16 @@ Claude Code 和 Codex 在两个系统上都支持，Windows 和 Mac 之间可以
 装好后按手机上的提示扫码配对，就能遥控电脑上的 Claude Code / Codex 会话。电脑端要先在 **手机遥控** 页打开开关。
 
 > [!NOTE]
-> **0.7.0 起遥控改用 MQTT。** 官方模式需要在电脑和手机上登录账号；自建模式在手机“设置 → MQTT 连接”里填自己的 Broker 地址、用户名和密码。传输层换了，**旧配对全部失效，需要重新扫码配对**。Android 沿用 0.6.1 的签名密钥，可以覆盖安装。
+> **0.7.0 起遥控改用 MQTT。** 官方模式需要在电脑和手机上登录账号；自建模式只部署一个 Mosquitto，填自己的用户名密码。传输层换了，**旧配对全部失效，需要重新扫码配对**。Android 沿用 0.6.1 的签名密钥，可以覆盖安装。
+
+### 手机遥控：官方托管 / 自建
+
+**官方托管（推荐）**：先到 **[官网注册](https://agent-sync.yirenzaowusuo.cn/register)**，然后电脑和手机登录同一个账号。客户端**不提供注册**，只负责登录；没有账号时登录页会给出官网链接。一个账号最多 5 台电脑 + 2 台手机，设备在登录/配对后自动登记，可以在[用户中心](https://agent-sync.yirenzaowusuo.cn/app/overview)改名、撤销、重置 MQTT 密码。
+
+**自建 Broker**：只需要部署一个 **Mosquitto**，用自带的 `password_file` 建用户名密码，不需要账号后台，也不需要 `agent-sync-auth`。客户端里填 Broker 地址、用户名、密码即可，效果和官网登录一样。
+
+- 完整使用流程：[docs/remote.md](docs/remote.md)
+- 自建部署教程和可直接复制给 AI 的提示词：[docs/mosquitto-selfhost.md](docs/mosquitto-selfhost.md)
 
 **和 Windows 版的区别**：
 

@@ -20,7 +20,6 @@ async function post(path, body) {
   return data
 }
 
-export const register = (username, password) => post('/v1/auth/register', { username, password })
 export const login = (username, password) => post('/v1/auth/login', { username, password })
 export const mqttToken = (sessionToken, deviceId, hostId, role, scope) =>
   post('/v1/mqtt/token', { sessionToken, deviceId, hostId, role, scope })

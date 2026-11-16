@@ -3,7 +3,9 @@ package service
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
@@ -24,6 +26,7 @@ import (
 	"github.com/ALFO111111/agent-sync/internal/fsutil"
 	"github.com/ALFO111111/agent-sync/internal/hostbundle"
 	"github.com/ALFO111111/agent-sync/internal/i18n"
+	"github.com/ALFO111111/agent-sync/internal/mqttlink"
 )
 
 // RemoteStatus 是手机遥控页展示的状态。
@@ -282,7 +285,7 @@ func GetRemoteConfig() (*RemoteConfig, error) {
 	}
 	mode := cfg.RemoteMode
 	if mode == "" {
-		mode = "selfhost"
+		mode = "official"
 	}
 	broker := DisplayBrokerURL(cfg.RemoteBroker)
 	return &RemoteConfig{
@@ -304,7 +307,7 @@ func SaveRemoteConfig(rc RemoteConfig) error {
 	}
 	mode := strings.TrimSpace(rc.Mode)
 	if mode != "official" && mode != "selfhost" {
-		mode = "selfhost"
+		mode = "official"
 	}
 	broker, err := NormalizeBrokerURL(rc.Broker)
 	if err != nil {
@@ -326,27 +329,67 @@ const remoteAuthBase = "https://agent-sync.yirenzaowusuo.cn/api"
 
 // LoginRemote 登录官方账号，并把账号信息交给本机 host 加密保存。
 func LoginRemote(username, password string) error {
-	return authRequest("/v1/auth/login", username, password)
+	return authRequest(username, password)
 }
 
-// RegisterRemote 开放注册；成功后自动保存会话。
-func RegisterRemote(username, password string) error {
-	return authRequest("/v1/auth/register", username, password)
+// TestRemoteBroker 用当前填写的地址和用户名密码连接一次 Broker，用于自建模式的“测试连接”。
+func TestRemoteBroker(rc RemoteConfig) error {
+	broker, err := NormalizeBrokerURL(rc.Broker)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		return err
+	}
+	link, err := mqttlink.New(mqttlink.Config{
+		URL:      broker,
+		ClientID: "agent-sync-test-" + hex.EncodeToString(buf),
+		Token:    mqttlink.StaticToken{Username: strings.TrimSpace(rc.Username), Password: rc.Password},
+	})
+	if err != nil {
+		return i18n.Err("连接失败：%v", err)
+	}
+	_ = link.Close()
+	return nil
 }
 
-func authRequest(path, username, password string) error {
+func authRequest(username, password string) error {
 	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
-	req, err := http.NewRequest(http.MethodPost, remoteAuthBase+path, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, remoteAuthBase+"/v1/auth/login", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return i18n.Err("无法连接账号服务，请检查网络")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
+		var apiErr struct {
+			Error      string `json:"error"`
+			Message    string `json:"message"`
+			RetryAfter int64  `json:"retryAfter"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
+		switch apiErr.Error {
+		case "invalid_credentials":
+			return i18n.Err("用户名或密码错误")
+		case "account_locked":
+			if apiErr.RetryAfter > 0 {
+				return i18n.Err("连续失败过多，已锁定 %d 分钟", (apiErr.RetryAfter+59)/60)
+			}
+			return i18n.Err("账号已锁定，请稍后再试")
+		case "account_disabled":
+			return i18n.Err("账号已停用")
+		case "rate_limited":
+			return i18n.Err("操作太频繁，请稍后再试")
+		}
+		if apiErr.Message != "" {
+			return errors.New(apiErr.Message)
+		}
 		return i18n.Err("账号请求失败：%s", resp.Status)
 	}
 	var out struct {
@@ -414,7 +457,7 @@ func remoteEnsureAt(cfg *config.Config, dir string) error {
 	}
 	mode := cfg.RemoteMode
 	if mode == "" {
-		mode = "selfhost"
+		mode = "official"
 	}
 	broker := cfg.RemoteBroker
 	if broker == "" {
