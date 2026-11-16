@@ -335,7 +335,6 @@ async function doPair(invitation) {
       conn.value.password = invitation.mqttPassword || ''
     }
     await saveConn()
-    if (!conn.value.username) throw new Error('这是自建 Broker 的二维码，但没有带用户名密码；请让电脑端重新生成二维码')
   }
   state.value = 'connecting'
   message.value = '正在连接 Broker…'
