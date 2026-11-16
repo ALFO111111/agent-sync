@@ -55,7 +55,7 @@ func (l *Link) connect(ctx context.Context) error {
 	}
 	c := mqtt.NewClient(opts)
 	tok := c.Connect()
-	if !tok.WaitTimeout(10*time.Second) {
+	if !tok.WaitTimeout(10 * time.Second) {
 		return errors.New("mqttlink: connect timeout")
 	}
 	if err := tok.Error(); err != nil {
