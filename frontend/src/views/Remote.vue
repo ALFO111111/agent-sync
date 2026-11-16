@@ -548,10 +548,11 @@ onUnmounted(() => clearInterval(timer))
 .revoked-badge { margin-left: 8px; }
 .name-input { max-width: 240px; }
 .invite-body { display: flex; gap: 18px; align-items: flex-start; }
-.qr { width: 200px; height: 200px; border-radius: 8px; background: #fff; padding: 6px; flex: none; }
+.qr { width: 300px; height: 300px; border-radius: 8px; background: #fff; padding: 6px; flex: none; }
 .invite-text { width: 100%; margin: 10px 0; resize: vertical; word-break: break-all; font-size: 12px; }
 @media (max-width: 640px) {
   .info-grid { grid-template-columns: 1fr; }
+  .qr { width: 240px; height: 240px; }
   .invite-body { flex-direction: column; }
 }
 </style>

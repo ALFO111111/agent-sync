@@ -371,6 +371,9 @@ export async function reconnect(saved, device, onPending, conn = {}) {
   if (!saved?.e2eeKey || !saved?.hostId) throw new Error('需要重新配对（缺少加密密钥）')
   const did = saved.deviceId || fingerprint(device.publicKey)
   const topics = topicSet(saved.uid || 'local', saved.hostId, did)
+  // 重连时把序号跳到当前时间戳：旧序号可能已经被电脑的重放窗口丢弃，
+  // 导致握手消息被当成重放而永远连不上。时间戳一定大于之前的窗口。
+  const startSeq = Math.max(Number(saved.seq) || 0, Date.now())
   const link = await MQTTLink.create({
     url: conn.url || saved.broker || saved.url,
     username: conn.username,
@@ -380,7 +383,7 @@ export async function reconnect(saved, device, onPending, conn = {}) {
     contentKey: saved.e2eeKey,
     hostID: saved.hostId,
     deviceID: did,
-    startSeq: saved.seq || 0,
+    startSeq,
   })
   try {
     return await connect(link, device, saved.name, null, onPending)
