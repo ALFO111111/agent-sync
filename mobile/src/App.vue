@@ -59,13 +59,11 @@ let historyTarget = null
 let historyGeneration = 0
 const displayedChat = computed(() => [...historyMessages.value, ...chat.value])
 const chatInput = ref('')
-const fileInput = ref(null)
 const attachments = ref([]) // {attachId,name,size,kind}
 const attachBusy = ref(false)
 const attachProgress = ref(0)
 const MAX_ATTACH = 3
 const MAX_ATTACH_BYTES = 10 * 1024 * 1024
-const TEXT_EXT = /\.(txt|md|markdown|json|jsonl|js|mjs|cjs|ts|tsx|jsx|vue|css|scss|html|xml|yml|yaml|toml|ini|cfg|conf|log|csv|tsv|py|go|rs|java|kt|kts|c|h|cpp|hpp|cs|php|rb|sh|bash|zsh|ps1|bat|cmd|sql|graphql|proto|tex)$/i
 let currentAssistant = null
 let currentThinking = null
 let typeTimer = null
@@ -870,30 +868,7 @@ function handleSessionEvent(ev) {
   }
 }
 
-function fileKind(file) {
-  const type = file.type || ''
-  if (type.startsWith('image/')) return 'image'
-  if (type.startsWith('text/') || TEXT_EXT.test(file.name || '')) return 'text'
-  return 'binary'
-}
-
-// 图片先在手机压缩，避免几 MB 的截图占用太长时间。
-async function compressImage(file) {
-  const bitmap = await createImageBitmap(file)
-  const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height))
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale))
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale))
-  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-  const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85))
-  if (!blob) throw new Error('compress failed')
-  return {
-    data: new Uint8Array(await blob.arrayBuffer()),
-    name: (file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg',
-  }
-}
-
-// 打开系统文件选择器可能让 WebView 暂停、连接断开；等自动重连后再继续。
+// 打开系统相机/相册可能让 WebView 暂停、连接断开；等自动重连后再继续。
 async function waitConnected(timeout = 20000) {
   const deadline = Date.now() + timeout
   while (Date.now() < deadline) {
@@ -901,45 +876,6 @@ async function waitConnected(timeout = 20000) {
     await new Promise(r => setTimeout(r, 300))
   }
   return false
-}
-
-function pickFiles() {
-  fileInput.value?.click()
-}
-
-async function onPickFiles(ev) {
-  const files = [...(ev.target.files || [])]
-  ev.target.value = ''
-  if (!files.length) return
-  let slots = MAX_ATTACH - attachments.value.length
-  for (const file of files) {
-    if (slots <= 0) { log(`每条消息最多 ${MAX_ATTACH} 个附件`); break }
-    let data
-    let name = file.name || 'attachment'
-    let mediaType = file.type || 'application/octet-stream'
-    const kind = fileKind(file)
-    let preview = ''
-    if (kind === 'image') {
-      try {
-        const small = await compressImage(file)
-        data = small.data
-        name = small.name
-        mediaType = 'image/jpeg'
-        preview = URL.createObjectURL(new Blob([data], { type: mediaType }))
-      } catch {
-        data = new Uint8Array(await file.arrayBuffer())
-        preview = URL.createObjectURL(file)
-      }
-    } else {
-      data = new Uint8Array(await file.arrayBuffer())
-    }
-    if (data.byteLength > MAX_ATTACH_BYTES) {
-      log(`附件 ${name} 超过 10 MB，已跳过`)
-      continue
-    }
-    await addAttachmentData({ name, mediaType, kind, data, preview })
-    slots--
-  }
 }
 
 function removeAttachment(id) {
@@ -1287,6 +1223,10 @@ function openChatFiles() {
 
 async function addAttachmentData({ name, mediaType, kind, data, preview }) {
   if (!session) return
+  if (attachments.value.length >= MAX_ATTACH) {
+    notify(`每条消息最多 ${MAX_ATTACH} 张图片`)
+    return
+  }
   attachBusy.value = true
   try {
     attachProgress.value = 0
@@ -1616,7 +1556,7 @@ async function pickGallery() {
           <div v-else class="notice">{{ m.text }}</div>
         </template>
         <div v-if="thinking" class="thinking-line"><span class="thinking-dot"></span>思考中</div>
-        <p v-if="!displayedChat.length && !historyLoading && !historyError" class="empty chat-empty">问点什么，或者点左下角的 + 发送图片和文件。</p>
+        <p v-if="!displayedChat.length && !historyLoading && !historyError" class="empty chat-empty">问点什么，或者点左下角的 + 发送图片。</p>
       </div>
 
       <div class="composer-wrap">
@@ -1631,7 +1571,6 @@ async function pickGallery() {
         <div v-if="showPlus" class="plus-sheet">
           <button @click="takePhoto"><span class="plus-ico"><Icon name="camera" :size="22" /></span>拍照</button>
           <button @click="pickGallery"><span class="plus-ico"><Icon name="image" :size="22" /></span>相册</button>
-          <button @click="pickFiles"><span class="plus-ico"><Icon name="file" :size="22" /></span>文件</button>
         </div>
         <div class="composer">
           <button class="round-btn" :disabled="!connected || attachBusy" @click="showPlus = !showPlus"><Icon name="plus" /></button>
@@ -1645,7 +1584,6 @@ async function pickGallery() {
           </button>
         </div>
       </div>
-      <input ref="fileInput" type="file" multiple class="hidden-file" @change="onPickFiles" />
     </section>
 
     <!-- 文件浏览：全屏 -->

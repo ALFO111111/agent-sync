@@ -264,13 +264,14 @@ export class Session {
       20000,
     )
     if (begin.type !== 'attach.begin' || !begin.attachId) throw new Error(begin.error || 'attach failed')
-    const chunk = begin.chunkSize || 6 * 1024
+    // 32 KiB 原始数据 base64 后仍小于加密层 64 KiB 的明文上限。
+    const chunk = Math.min(begin.chunkSize || 16 * 1024, 32 * 1024)
     for (let off = 0, seq = 0; off < data.byteLength; off += chunk, seq++) {
       const part = data.subarray(off, Math.min(off + chunk, data.byteLength))
-      this.link.send({ v: 1, type: 'attach.chunk', attachId: begin.attachId, seq, data: b64(part) })
+      await this.link.send({ v: 1, type: 'attach.chunk', attachId: begin.attachId, seq, data: b64(part) })
       onProgress?.(Math.min(1, (off + part.byteLength) / data.byteLength))
-      // 服务端每秒最多 20 帧；每块之后让一下，留出心跳和其他消息的余量。
-      await new Promise(r => setTimeout(r, 70))
+      // 服务端每秒最多 20 帧；32 KiB × 20 ≈ 640 KiB/s。
+      await new Promise(r => setTimeout(r, 50))
     }
     const endID = Math.random().toString(16).slice(2, 12)
     this.link.send({ v: 1, type: 'attach.end', id: endID, attachId: begin.attachId })

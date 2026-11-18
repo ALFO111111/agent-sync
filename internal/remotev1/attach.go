@@ -13,8 +13,8 @@ import (
 const (
 	// MaxAttachments 每条消息最多带几个附件。
 	MaxAttachments = 3
-	// MQTTAttachChunk 是 MQTT 路径的单块大小；加密和 base64 后仍小于 256 KiB。
-	MQTTAttachChunk = 64 * 1024
+	// MQTTAttachChunk 是 MQTT 路径的单块大小。base64 后仍需小于加密层 64 KiB 的明文上限。
+	MQTTAttachChunk = 32 * 1024
 	// maxPendingAttachments 一条连接上同时存在的未发送附件数。
 	maxPendingAttachments = 8
 	// maxMQTTAttachmentSize 是 MQTT 单附件上限。

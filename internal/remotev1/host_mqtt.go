@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -619,10 +620,8 @@ func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, 
 			_ = send(Envelope{Type: "attach.error", ID: env.ID, Error: "too many pending attachments"})
 			return
 		}
-		switch env.Kind {
-		case "image", "text", "binary":
-		default:
-			_ = send(Envelope{Type: "attach.error", ID: env.ID, Error: "invalid attachment kind"})
+		if env.Kind != "image" || !strings.HasPrefix(env.MediaType, "image/") {
+			_ = send(Envelope{Type: "attach.error", ID: env.ID, Error: "only images are allowed"})
 			return
 		}
 		id := RandomToken(16)

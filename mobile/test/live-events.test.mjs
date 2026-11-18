@@ -2,7 +2,17 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { MQTTLink } from '../src/lib/mqttlink.js'
 import { Session } from '../src/lib/protocol.js'
-import { newKey, parseKey } from '../src/lib/e2ee.js'
+import { newKey, parseKey, seal } from '../src/lib/e2ee.js'
+
+test('32KiB attachment chunk still fits in one encrypted frame', () => {
+  const key = new Uint8Array(32).fill(9)
+  const raw = new Uint8Array(32 * 1024).fill(65)
+  const json = JSON.stringify({
+    v: 1, type: 'attach.chunk', attachId: 'x', seq: 0,
+    data: Buffer.from(raw).toString('base64'),
+  })
+  assert.doesNotThrow(() => seal(key, 'c2h', 'd', 1, new TextEncoder().encode(json)))
+})
 
 test('sendTurn rejects when the underlying publish fails', async () => {
   const client = {

@@ -305,6 +305,29 @@ func TestSlowDeviceDoesNotBlockAnotherDevice(t *testing.T) {
 	close(slow.release)
 }
 
+func TestAttachRejectsNonImage(t *testing.T) {
+	key, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, key)
+	h := &Host{Authority: auth, Logf: func(string, ...any) {}}
+	st := &deviceState{
+		window:  NewReplayWindow(1024),
+		subs:    map[string]context.CancelFunc{},
+		device:  Device{ID: "d1"},
+		uploads: map[string]Attachment{},
+	}
+	h.devices = map[string]*deviceState{"d1": st}
+	tr := newFakeTransport()
+	ts := TopicSet{UID: "u1", HID: "h1", DID: "d1"}
+	h.dispatchEnvelope(context.Background(), tr, ts, "d1", st, Envelope{
+		Type: "attach.begin", ID: "a1", Kind: "text", MediaType: "text/plain", Size: 10,
+	})
+	msg := nextOn(t, tr, ts.Evt())
+	env := readEnvelope(t, key, auth.state.HostID, 1, msg)
+	if env.Type != "attach.error" {
+		t.Fatalf("reply type = %s, want attach.error", env.Type)
+	}
+}
+
 func TestStreamEventsAreBatched(t *testing.T) {
 	key, _ := NewContentKey()
 	auth := NewMemoryAuthority(t, key)
