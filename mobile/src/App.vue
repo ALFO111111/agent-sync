@@ -19,6 +19,7 @@ import {
   parseDeepLink,
   reconnect,
 } from './lib/protocol.js'
+import { createSeqGate } from './lib/seq.js'
 import { secureGet, secureRemove, secureSet, storageIsSecure } from './lib/storage.js'
 import { login as authLogin, mqttToken, passwordValid, usernameValid } from './lib/auth.js'
 import { hostKey, pickActive, upsertPairing } from './lib/pairings.js'
@@ -69,7 +70,7 @@ let currentThinking = null
 let typeTimer = null
 let pendingText = ''
 let claudeSessionId = ""
-let lastSeq = 0
+const seqGate = createSeqGate()
 let reconnecting = false
 let manualClose = false
 let reconnectEpoch = 0
@@ -468,7 +469,8 @@ async function autoReconnect() {
             const hit = list.find(a => a.claudeSessionId === claudeSessionId)
             if (hit) {
               sessionKey.value = hit.key
-              await session.subscribe(hit.key, lastSeq, onSessionEvent)
+              seqGate.reset()
+              await session.subscribe(hit.key, 0, onSessionEvent)
               chat.value.push({ role: 'notice', text: '已接回原会话' })
               log('已接回原会话')
             } else {
@@ -696,7 +698,7 @@ async function startChat(cwd, resumeId) {
   }
   resetHistory()
   const key = await session.startSession(tool.value, cwd, resumeId || '', mode.value)
-  lastSeq = 0
+  seqGate.reset()
   claudeSessionId = ''
   sessionKey.value = key
   chat.value = []
@@ -771,14 +773,22 @@ function finishTypewriter() {
   currentAssistant = null
 }
 
+// 丢弃尚未显示完的积压文本（会话重启/切换模式时用，不要 flush 到旧气泡）。
+function clearTypewriter() {
+  if (typeTimer) {
+    clearInterval(typeTimer)
+    typeTimer = null
+  }
+  pendingText = ''
+}
+
 function onSessionEvent(ev) {
-  if (ev.seq && ev.seq <= lastSeq) return
+  if (!seqGate.accept(ev.seq)) return
   handleSessionEvent(ev)
   scrollChat()
 }
 
 function handleSessionEvent(ev) {
-  if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq
   if (ev.kind === 'init' && ev.sessionId) {
     claudeSessionId = ev.sessionId
     return
@@ -1033,7 +1043,12 @@ async function switchMode(next) {
     const moved = key !== sessionKey.value
     sessionKey.value = key
     if (moved) {
+      // 新 Runner 的事件序号从 1 重新开始；不重置就会被当成重复全部丢弃。
+      clearTypewriter()
+      seqGate.reset()
       currentAssistant = null
+      currentThinking = null
+      pendingText = ''
       await session.subscribe(key, 0, onSessionEvent)
     }
     chat.value.push({
