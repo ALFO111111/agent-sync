@@ -20,6 +20,7 @@ import {
   reconnect,
 } from './lib/protocol.js'
 import { createSeqGate } from './lib/seq.js'
+import { shouldSendOnEnter, shouldStickToBottom } from './lib/scroll.js'
 import { secureGet, secureRemove, secureSet, storageIsSecure } from './lib/storage.js'
 import { login as authLogin, mqttToken, passwordValid, usernameValid } from './lib/auth.js'
 import { hostKey, pickActive, upsertPairing } from './lib/pairings.js'
@@ -90,6 +91,7 @@ const overviewBusy = ref(false)
 const overviewErr = ref("")
 const theme = ref((() => { try { return localStorage.getItem('ags:theme') || 'system' } catch { return 'system' } })())
 const msgBox = ref(null)
+const stickToBottom = ref(true)
 const filesOpen = ref(false)
 const fsCwd = ref("")
 const fsPath = ref("")
@@ -679,7 +681,7 @@ async function loadHistory(older = false) {
     if (older) {
       await nextTick()
       if (msgBox.value) msgBox.value.scrollTop += msgBox.value.scrollHeight - beforeHeight
-    } else scrollChat()
+    } else scrollChat(true)
   } catch (err) {
     if (generation === historyGeneration && linkSession === session) historyError.value = err.message || String(err)
   } finally {
@@ -705,6 +707,7 @@ async function startChat(cwd, resumeId) {
   currentAssistant = null
   generating.value = false
   chatOpen.value = true
+  stickToBottom.value = true
   // 历史请求和 session.subscribe 互不依赖，同时发出，少等一个往返。
   if (resumeId) {
     historyTarget = { tool: tool.value, cwd, id: resumeId }
@@ -753,7 +756,7 @@ function startTypewriter() {
     const n = Math.max(1, Math.ceil(pendingText.length / 20))
     bubble.text += pendingText.slice(0, n)
     pendingText = pendingText.slice(n)
-    scrollChat()
+    scheduleScroll()
   }, 16)
 }
 
@@ -785,7 +788,7 @@ function clearTypewriter() {
 function onSessionEvent(ev) {
   if (!seqGate.accept(ev.seq)) return
   handleSessionEvent(ev)
-  scrollChat()
+  scheduleScroll()
 }
 
 function handleSessionEvent(ev) {
@@ -892,6 +895,12 @@ function removeAttachment(id) {
   attachments.value = attachments.value.filter(a => a.attachId !== id)
 }
 
+function onEnter(e) {
+  if (!shouldSendOnEnter(e)) return
+  e.preventDefault()
+  sendChat()
+}
+
 function sendChat() {
   run(async () => {
     const text = chatInput.value.trim()
@@ -918,7 +927,7 @@ function sendChat() {
       return
     }
     if (chatInputEl.value) chatInputEl.value.style.height = 'auto'
-    scrollChat()
+    scrollChat(true)
   })
 }
 
@@ -1163,10 +1172,26 @@ function closeFiles() {
   filesOpen.value = false
 }
 
-async function scrollChat() {
+async function scrollChat(force = false) {
   await nextTick()
   const el = msgBox.value
-  if (el) el.scrollTop = el.scrollHeight
+  if (el && (force || stickToBottom.value)) el.scrollTop = el.scrollHeight
+}
+
+function onChatScroll() {
+  const el = msgBox.value
+  if (!el) return
+  stickToBottom.value = shouldStickToBottom(el)
+}
+
+let scrollScheduled = false
+function scheduleScroll() {
+  if (scrollScheduled) return
+  scrollScheduled = true
+  requestAnimationFrame(() => {
+    scrollScheduled = false
+    void scrollChat()
+  })
 }
 
 function pickTool(next) {
@@ -1532,7 +1557,7 @@ async function pickGallery() {
         </button>
       </div>
 
-      <div ref="msgBox" class="messages">
+      <div ref="msgBox" class="messages" @scroll="onChatScroll">
         <div class="history-actions">
           <span v-if="historyLoading">正在加载历史…</span>
           <template v-else-if="historyError"><span>{{ historyError }}</span><button class="sm" :disabled="!connected" @click="loadHistory()">重试</button></template>
@@ -1574,6 +1599,10 @@ async function pickGallery() {
         <p v-if="!displayedChat.length && !historyLoading && !historyError" class="empty chat-empty">问点什么，或者点左下角的 + 发送图片。</p>
       </div>
 
+      <button v-if="!stickToBottom" class="jump-bottom" @click="stickToBottom = true; scrollChat(true)">
+        回到底部
+      </button>
+
       <div class="composer-wrap">
         <div v-if="attachments.length || attachBusy" class="attach-row">
           <div v-for="a in attachments" :key="a.attachId" class="attach-thumb">
@@ -1591,7 +1620,8 @@ async function pickGallery() {
           <button class="round-btn" :disabled="!connected || attachBusy" @click="showPlus = !showPlus"><Icon name="plus" /></button>
           <textarea
             ref="chatInputEl" v-model="chatInput" rows="1" placeholder="发消息…"
-            @keydown.enter.exact.prevent="sendChat" @input="growInput"
+            enterkeyhint="send"
+            @keydown.enter.exact="onEnter" @input="growInput"
           ></textarea>
           <button v-if="generating" class="round-btn stop" @click="stopChat"><Icon name="stop" /></button>
           <button v-else class="round-btn send" :disabled="!connected || attachBusy || (!chatInput.trim() && !attachments.length)" @click="sendChat">
