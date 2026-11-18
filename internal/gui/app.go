@@ -79,6 +79,9 @@ func (a *App) startup(ctx context.Context) {
 		_ = service.PrepareRemoteHost() // 安装失败由手机遥控状态展示；不自动启动。
 		if service.LoadStatus().Initialized {
 			service.EnsureAutoSync() // 失败写日志，首页会提示
+			if err := service.RemoteResumeOnStartup(); err != nil {
+				logging.New(true).Printf("恢复手机遥控失败: %v", err)
+			}
 			a.startWatcher()
 		}
 	}()

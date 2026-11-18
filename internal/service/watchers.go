@@ -77,6 +77,7 @@ func RunDaemon(ctx context.Context) error {
 		case <-time.After(time.Minute):
 		}
 	}
+	_ = RemoteResumeOnStartup() // macOS 无窗口后台进程：上次开着就继续开着
 	kick := make(chan struct{}, 1)
 	trigger := func() {
 		select {

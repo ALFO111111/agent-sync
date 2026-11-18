@@ -48,6 +48,7 @@ type Config struct {
 	RemoteClaudeBin string `json:"remoteClaudeBin,omitempty"` // claude 可执行文件（空=自动）
 	RemoteBin       string `json:"remoteBin,omitempty"`       // agent-sync-host 可执行文件（空=自动）
 	RemoteProxy     string `json:"remoteProxy,omitempty"`     // 启动主机组件时用的 HTTP(S) 代理（空=继承当前环境）
+	RemoteEnabled   bool   `json:"remoteEnabled,omitempty"`   // 用户上次是否开着手机遥控；重启后据此恢复
 }
 
 // homeEnv 测试/沙箱用的数据目录环境变量；改名前的 CLAUDE_CODE_SYNC_HOME 也认。

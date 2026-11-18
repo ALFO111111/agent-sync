@@ -349,6 +349,9 @@ func LoginRemote(username, password, broker string) error {
 	if !st.OK {
 		return errors.New(st.Error)
 	}
+	if cfg, err := config.Load(); err == nil {
+		_ = setRemoteEnabled(cfg, true)
+	}
 	return nil
 }
 
@@ -625,15 +628,57 @@ func zeroToEmpty(s string) string {
 	return s
 }
 
-// RemoteStart 启动主机组件（已在运行则什么都不做）。
-func RemoteStart(cfg *config.Config) error { return RemoteEnsure(cfg) }
+// RemoteStart 启动主机组件（已在运行则什么都不做），并记住“用户要它开着”。
+func RemoteStart(cfg *config.Config) error {
+	if err := remoteEnsureFn(cfg); err != nil {
+		return err
+	}
+	return setRemoteEnabled(cfg, true)
+}
 
-// RemoteStop 让主机组件退出；没在运行也算成功。
+// RemoteStop 让主机组件退出；没在运行也算成功，并记住“用户明确关掉了”。
 func RemoteStop() error {
 	remoteLifecycle.Lock()
 	defer remoteLifecycle.Unlock()
-	return remoteStopAt(RemoteDir(), 15*time.Second)
+	if err := remoteStopFn(); err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	return setRemoteEnabled(cfg, false)
 }
+
+// RemoteResumeOnStartup 如果上次遥控是开着的，就在后台把它拉起来。
+// 重启电脑后 GUI/daemon 会自动走到这里，不需要用户再点一次。
+func RemoteResumeOnStartup() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if !cfg.RemoteEnabled {
+		return nil
+	}
+	if remoteStatusFn(cfg).Running {
+		return nil
+	}
+	return remoteEnsureFn(cfg)
+}
+
+func setRemoteEnabled(cfg *config.Config, on bool) error {
+	if cfg.RemoteEnabled == on {
+		return nil
+	}
+	cfg.RemoteEnabled = on
+	return config.Save(cfg)
+}
+
+var (
+	remoteEnsureFn = RemoteEnsure
+	remoteStatusFn = func(cfg *config.Config) RemoteStatus { return GetRemoteStatus(cfg) }
+	remoteStopFn   = func() error { return remoteStopAt(RemoteDir(), 15*time.Second) }
+)
 
 func remoteStopAt(dir string, timeout time.Duration) error {
 	if pid := remoteStopping[dir]; pid > 0 {
