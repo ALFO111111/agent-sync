@@ -29,6 +29,27 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - 电脑端 MQTT 断线后自动重连、重新订阅、刷新 token，并在重连后重发 `{"online":true}`。此前 `AutoReconnect` 被关闭，网络抖动一次后主机会永久离线。
   The host now reconnects automatically, re-subscribes, refreshes credentials and republishes its online status. Previously auto-reconnect was disabled, so a single network blip left the host offline forever.
 
+### 新增 / Added
+
+- 每台手机使用独立的会话密钥：删除或撤销一台手机只影响它自己，其他手机继续正常工作，不需要重新配对。旧 App 重连时会自动迁移；协议通过 `device.key.v1` 能力协商，旧电脑仍可回退到共用密钥。
+  Each phone now has its own session key. Deleting or revoking one phone affects only that phone; other phones keep working without re-pairing. New phones migrate on reconnect, negotiated through the `device.key.v1` capability.
+- 回合完成或等待批准时，手机在后台会收到 Android 本地通知；不接第三方/付费推送。
+  Android local notifications when a turn finishes or an approval is waiting while the app is in the background.
+- 聊天页智能滚动（用户上滑时不抢滚动条）、中文输入法回车保护、发送失败保留输入与附件。
+- 配对请求 5 分钟无操作自动过期，桌面端显示倒计时；过期后手机收到 `denied`。
+
+### 修复 / Fixed
+
+- 手机断线后自动重连，界面不再显示假的“已连接”；回到前台也会立即重连。
+  The phone reconnects automatically after a drop and no longer shows a stale “connected” state.
+- 电脑重启后自动恢复上次开启的手机遥控，不需要用户再点一次。
+- 手机端附件只允许图片；分块从 64 KiB 降到 32 KiB，修复大附件因超过加密明文上限而必然失败的问题。
+- 每次重连不再在电脑端泄漏订阅；同一会话重复订阅会替换旧流，重连时清理该设备的旧流。
+- 切换权限模式后重置事件序号，新输出不再被当成重复丢弃。
+- 不需要密钥的伪造帧不再能推进重放窗口或创建无限设备状态。
+- 慢的文件/git 请求只阻塞当前设备，不再卡住所有手机；git 命令加 10 秒超时。
+- 首次获取 MQTT token 使用调用方超时，token 服务卡住时 host 能失败退出而不是永久挂死。
+
 ## [0.7.0] - 2026-11-14
 
 ### 变更 / Changed

@@ -96,6 +96,18 @@ Download `agent-sync-<version>-macos-arm64.dmg` from [Releases](https://github.c
   ```
   If that's too long, add an alias: `alias agent-sync=/Applications/agent-sync.app/Contents/MacOS/agent-sync`
 
+### Android (phone remote)
+
+Download `agent-sync-<version>-android.apk` from [Releases](https://github.com/ALFO111111/agent-sync/releases) and install it on your phone (allow "install unknown apps" the first time). The APK is release-signed, not a debug build.
+
+> [!WARNING]
+> The Android signing key changed in 0.6.1. 0.6.0 cannot be upgraded in place: uninstall the old app, install 0.6.1 or later, and pair again. From 0.6.1 the same long-term key is used, so later versions install over the old one.
+
+Open **Phone remote** on the desktop, turn it on, and scan the QR code with the phone. **The phone does not log in**: in hosted mode only the desktop signs in; self-hosted mode only needs your Mosquitto username and password.
+
+> [!NOTE]
+> 0.7.0 switched remote control to MQTT. Hosted mode: sign in on the desktop, then scan from the phone. Self-hosted: run one Mosquitto. Old pairings are invalid and must be redone. The Android signing key is unchanged from 0.6.1.
+
 ### Updating
 
 The app checks GitHub for a new version when it opens (and once a day after that); when there is one, a red dot appears on "Settings" in the sidebar. In **Settings → About**, click "Update to vX.Y.Z": it downloads the new version, verifies it against `SHA256SUMS.txt`, replaces itself and reopens. Sessions and settings are not touched. "Not now" stops reminders for that version.

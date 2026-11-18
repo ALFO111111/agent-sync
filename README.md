@@ -23,12 +23,14 @@
 <p align="center"><img src="docs/images/home.png" width="760" alt="首页：同步状态、本轮明细、设备、云端空间" /></p>
 
 <details>
-<summary><b>更多截图</b>（会话浏览、备份与恢复、深色模式）</summary>
+<summary><b>更多截图</b>（会话浏览、备份与恢复、深色模式、手机遥控）</summary>
 <br />
 <p align="center"><img src="docs/images/sessions.png" width="760" alt="会话：浏览、搜索、在 Claude Code 里继续" /></p>
 <p align="center"><img src="docs/images/backups.png" width="760" alt="备份与恢复：对比后一键恢复" /></p>
 <p align="center"><img src="docs/images/home-dark.png" width="760" alt="深色模式" /></p>
-<p align="center"><sub>截图里的设备、项目、路径都是演示数据（<code>cd frontend && npm run demo</code>）。</sub></p>
+<p align="center"><img src="docs/images/mobile-sessions.png" width="320" alt="手机遥控：会话列表" />
+<img src="docs/images/mobile-chat.png" width="320" alt="手机遥控：实时查看思考过程和工具调用" /></p>
+<p align="center"><sub>桌面截图里的设备、项目、路径都是演示数据（<code>cd frontend && npm run demo</code>）；手机截图来自真机。</sub></p>
 </details>
 
 ## 为什么需要它
@@ -402,6 +404,7 @@ agent-sync update                     # 检查更新，有新版本就下载安�
 
 - 会话内容在本机加密后才上传：口令经 Argon2id 推导出 256 位密钥，内容 gzip 压缩后用 AES-256-GCM 加密，对象路径作为附加数据防止调包。
 - 手机遥控使用**每台手机独立**的端到端密钥：删除或撤销一台手机只影响它自己，其他手机继续正常工作，不需要重新配对。
+- **手机遥控的数据边界**：官方托管模式下，电脑和手机之间的聊天内容仍然端到端加密，MQTT Broker 只看得到主题名、设备 ID 和收发时间；官方服务器负责账号、设备配对批准和短期 MQTT 凭证。自建 Broker 时这些都由你自己的服务器承担。不想要官方服务，可以随时改用自建模式。
 - 程序只和**你自己配置的**对象存储通信，没有任何遥测、统计。唯一的例外是**检查更新**：打开程序时和之后每天一次，向 GitHub 问一下最新版本号（`api.github.com`，不带任何个人信息），点“更新”时才从 GitHub 下载安装包。不想要的话在“设置 → 通用”里关掉“自动检查更新”。
 - 发现安全问题请看 [SECURITY.md](SECURITY.md)，不要直接发公开 issue。
 
