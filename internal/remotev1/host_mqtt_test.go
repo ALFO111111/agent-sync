@@ -115,6 +115,40 @@ func TestHostDispatchDeviceList(t *testing.T) {
 	}
 }
 
+func TestForgedFrameDoesNotAdvanceReplayWindow(t *testing.T) {
+	key, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, key)
+	h := &Host{Authority: auth, Logf: func(string, ...any) {}}
+	h.devices = map[string]*deviceState{}
+	ts := TopicSet{UID: "u1", HID: "h1", DID: "d1"}
+	// 用错误的密钥封一个极大序号；解密必须失败，且窗口不能前进。
+	wrong, _ := NewContentKey()
+	f, err := SealFrame(wrong, ClientToHost, "d1", 1<<40, []byte(`{"v":1,"type":"ping"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(f)
+	h.onMessage(context.Background(), newFakeTransport(), ts, ts.Req(), raw)
+	if _, ok := h.devices["d1"]; ok {
+		t.Fatal("forged frame created device state")
+	}
+}
+
+func TestUnknownDeviceWithoutHelloIsIgnored(t *testing.T) {
+	key, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, key)
+	h := &Host{Authority: auth}
+	h.devices = map[string]*deviceState{}
+	ts := TopicSet{UID: "u1", HID: "h1", DID: "d1"}
+	plain := []byte(`{"v":1,"type":"fs.list"}`)
+	f, _ := SealFrame(key, ClientToHost, "d1", 1, plain)
+	raw, _ := json.Marshal(f)
+	h.onMessage(context.Background(), newFakeTransport(), ts, ts.Req(), raw)
+	if _, ok := h.devices["d1"]; ok {
+		t.Fatal("non-hello message created state for unknown device")
+	}
+}
+
 func TestStreamEventsAreBatched(t *testing.T) {
 	key, _ := NewContentKey()
 	auth := NewMemoryAuthority(t, key)

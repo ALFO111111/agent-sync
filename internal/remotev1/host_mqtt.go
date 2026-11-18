@@ -12,6 +12,7 @@ import (
 const (
 	streamBatch      = 40 * time.Millisecond
 	maxSubscriptions = 4
+	maxDeviceStates  = 64
 )
 
 type deviceState struct {
@@ -30,6 +31,7 @@ type deviceState struct {
 	subs         int
 	uploads      map[string]Attachment
 	lastSeen     time.Time
+	created      time.Time
 }
 
 func (h *Host) contentKey() ContentKey {
@@ -86,22 +88,7 @@ func (h *Host) onMessage(ctx context.Context, tr Transport, ts TopicSet, topic s
 	if json.Unmarshal(payload, &f) != nil || f.From != did {
 		return
 	}
-	h.mu.Lock()
-	st := h.devices[did]
-	if st == nil {
-		st = &deviceState{window: NewReplayWindow(1024)}
-		h.devices[did] = st
-	}
-	h.mu.Unlock()
-	st.mu.Lock()
-	fresh := st.window.Accept(f.Seq)
-	if fresh {
-		st.lastSeen = time.Now()
-	}
-	st.mu.Unlock()
-	if !fresh {
-		return
-	}
+	// 先解密验证，再推进重放窗口：否则任何人伪造一个大序号就能把该设备的正常指令顶死。
 	key, err := ParseContentKey(h.Authority.State().ContentKey)
 	if err != nil {
 		return
@@ -114,7 +101,46 @@ func (h *Host) onMessage(ctx context.Context, tr Transport, ts TopicSet, topic s
 	if json.Unmarshal(plain, &env) != nil {
 		return
 	}
+
+	h.mu.Lock()
+	st := h.devices[did]
+	if st == nil {
+		if env.Type != "hello" {
+			h.mu.Unlock()
+			return
+		}
+		st = &deviceState{window: NewReplayWindow(1024), created: time.Now()}
+		h.devices[did] = st
+		for len(h.devices) > maxDeviceStates {
+			h.evictOldestDeviceLocked()
+		}
+	}
+	h.mu.Unlock()
+
+	st.mu.Lock()
+	fresh := st.window.Accept(f.Seq)
+	if fresh {
+		st.lastSeen = time.Now()
+	}
+	st.mu.Unlock()
+	if !fresh {
+		return
+	}
 	h.handleEnvelope(ctx, tr, ts, did, kind, env)
+}
+
+// evictOldestDeviceLocked 在设备状态过多时丢掉最早创建的一台；调用方持有 h.mu。
+func (h *Host) evictOldestDeviceLocked() {
+	var oldest string
+	var oldestAt time.Time
+	for did, st := range h.devices {
+		if oldest == "" || st.created.Before(oldestAt) {
+			oldest, oldestAt = did, st.created
+		}
+	}
+	if oldest != "" {
+		delete(h.devices, oldest)
+	}
 }
 
 func (h *Host) readyWithCredentials(ctx context.Context, deviceID string) Envelope {
