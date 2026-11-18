@@ -102,6 +102,7 @@ var en = map[string]string{
 	"安装 Claude Code hooks 失败: %w": "Failed to install Claude Code hooks: %w",
 	"登录时自动同步的任务没装上（权限不够），每小时一次的定时同步不受影响": "Could not install the sync-at-logon task (insufficient permissions); the hourly scheduled sync is not affected",
 	"自动同步安装失败: %v": "Failed to set up automatic sync: %v",
+	"恢复手机遥控失败: %v": "Failed to resume phone remote: %v",
 	"删除改名前的定时任务/开机自启失败（不影响同步，下次再试）: %v":                               "Failed to remove the scheduled task / autostart left from before the rename (sync is not affected, will retry): %v",
 	"补回 Claude Code hooks 失败: %v":                                     "Failed to restore Claude Code hooks: %v",
 	"Claude Code hooks 不见了（可能是 CC Switch 等工具改写了 settings.json），已自动补回": "Claude Code hooks were missing (settings.json was probably rewritten by a tool like CC Switch); restored automatically",

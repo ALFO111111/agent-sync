@@ -418,7 +418,7 @@ export default {
     editInfo: 'Edit connection',
     deleteDevice: 'Delete',
     deleteTitle: 'Delete this device?',
-    deleteConfirm: '“{name}” will need to pair again to reconnect.',
+    deleteConfirm: 'This revokes only “{name}”. Other paired phones are unaffected. Continue?',
     deletedDevice: 'Device deleted',
     stop: 'Stop host',
     started: 'Host started',

@@ -1,6 +1,36 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { MQTTLink } from '../src/lib/mqttlink.js'
+import { newKey, parseKey } from '../src/lib/e2ee.js'
+
+test('device keys are 32 random bytes and parse back', () => {
+  const a = newKey()
+  const b = newKey()
+  assert.equal(parseKey(a).length, 32)
+  assert.notEqual(a, b)
+})
+
+test('MQTTLink can switch to the session key after handshake', () => {
+  const client = { on() {}, subscribeAsync: async () => {}, publishAsync: async () => {}, end() {} }
+  const link = new MQTTLink({
+    client, topics: {}, mode: 'session',
+    contentKey: Buffer.alloc(32, 1).toString('base64'), hostID: 'h', deviceID: 'd',
+  })
+  const next = newKey()
+  link.setKey(next)
+  assert.deepEqual(Array.from(link.key), Array.from(parseKey(next)))
+})
+
+test('handshake messages always go to the pair topic', () => {
+  const client = { on() {}, subscribeAsync: async () => {}, publishAsync: async () => {}, end() {} }
+  const link = new MQTTLink({
+    client, topics: { req: 'req', up: 'up', pair: 'pair' }, mode: 'session',
+    contentKey: Buffer.alloc(32, 1).toString('base64'), hostID: 'h', deviceID: 'd',
+  })
+  assert.equal(link.topicFor({ type: 'hello' }), 'pair')
+  assert.equal(link.topicFor({ type: 'proof' }), 'pair')
+  assert.equal(link.topicFor({ type: 'turn.send' }), 'req')
+})
 
 test('session.events reply with an id resolves the pending request', async () => {
   const client = { on() {}, subscribeAsync: async () => {}, publishAsync: async () => {}, end() {} }

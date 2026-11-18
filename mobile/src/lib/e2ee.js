@@ -14,6 +14,14 @@ export function parseKey(b64) {
   return raw
 }
 
+// newKey 生成 32 字节随机密钥（base64），用于每台手机自己的会话密钥。
+export function newKey() {
+  const raw = crypto.getRandomValues(new Uint8Array(32))
+  let s = ''
+  for (const b of raw) s += String.fromCharCode(b)
+  return btoa(s)
+}
+
 const b64 = bytes => {
   let s = ''
   for (let i = 0; i < bytes.length; i += 0x8000) {

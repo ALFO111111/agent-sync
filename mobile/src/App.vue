@@ -352,7 +352,9 @@ async function doPair(invitation) {
     broker: conn.value.url || invitation.url,
     name: session.ready.hostName || '电脑',
     deviceId: did,
-    e2eeKey: invitation.contentKey,
+    e2eeKey: session.deviceKey || invitation.contentKey,
+    pairKey: session.pairKey,
+    deviceKey: session.deviceKey || '',
     seq: session.link.seq,
     mqttUser: session.ready.mqttUser || invitation.mqttUser || '',
     mqttPassword: session.ready.mqttPassword || invitation.mqttPassword || '',
@@ -384,6 +386,9 @@ async function doReconnect() {
   const creds = await credentialsFor(pairing.value.hostId, did, 'session', { saved: pairing.value })
   session = await reconnect(pairing.value, device.value, onPending, creds)
   ready.value = session.ready
+  pairing.value.pairKey = session.pairKey
+  pairing.value.deviceKey = session.deviceKey || ''
+  pairing.value.e2eeKey = session.deviceKey || session.pairKey
   pairing.value.seq = session.link.seq
   await savePairingsStore(pairings.value, pairing.value)
   state.value = 'connected'
@@ -436,6 +441,9 @@ async function autoReconnect() {
         const creds = await credentialsFor(pairing.value.hostId, did, 'session', { saved: pairing.value })
         session = await reconnect(pairing.value, device.value, onPending, creds)
         ready.value = session.ready
+        pairing.value.pairKey = session.pairKey
+        pairing.value.deviceKey = session.deviceKey || ''
+        pairing.value.e2eeKey = session.deviceKey || session.pairKey
         pairing.value.seq = session.link.seq
         await savePairingsStore(pairings.value, pairing.value)
         attachClose()

@@ -417,7 +417,7 @@ export default {
     editInfo: '编辑连接信息',
     deleteDevice: '删除',
     deleteTitle: '删除这台设备？',
-    deleteConfirm: '删除“{name}”后，这台手机需要重新扫码配对。',
+    deleteConfirm: '只撤销“{name}”这台手机，其他已配对手机不受影响。确定删除？',
     deletedDevice: '已删除设备',
     stop: '停止主机',
     started: '主机已启动',

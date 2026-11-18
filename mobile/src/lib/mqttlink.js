@@ -154,7 +154,13 @@ export class MQTTLink {
     })
   }
 
+  setKey(b64) {
+    this.key = parseKey(b64)
+  }
+
   topicFor(msg) {
+    // 握手消息永远走 pair 主题：电脑按主题选择全局配对密钥。
+    if (msg.type === 'hello' || msg.type === 'proof') return this.topics.pair
     if (msg.type?.startsWith('attach.')) return this.topics.up
     if (this.mode === 'pair') return this.topics.pair
     return this.topics.req

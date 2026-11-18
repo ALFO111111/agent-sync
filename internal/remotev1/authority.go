@@ -28,6 +28,7 @@ type Device struct {
 	Name        string    `json:"name"`
 	PublicKey   string    `json:"publicKey"`
 	Fingerprint string    `json:"fingerprint"`
+	ContentKey  string    `json:"contentKey,omitempty"` // 该设备专属的会话加密密钥
 	CreatedAt   time.Time `json:"createdAt"`
 	LastSeen    time.Time `json:"lastSeen,omitempty"`
 	Revoked     bool      `json:"revoked,omitempty"`
@@ -110,6 +111,7 @@ type Pending struct {
 	DevicePub   string
 	Fingerprint string
 	InviteID    string
+	ContentKey  string `json:"-"` // 只在内存里用，不暴露给桌面 UI
 	Expires     time.Time
 	Result      chan bool
 }
@@ -291,8 +293,50 @@ func (a *Authority) Device(pubB64 string) (Device, bool) {
 	return Device{}, false
 }
 
+// DeviceByRef 按 ID / 指纹 / 公钥查找设备（含已撤销）。
+func (a *Authority) DeviceByRef(ref string) (Device, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, d := range a.state.Devices {
+		if d.ID == ref || d.Fingerprint == ref || d.PublicKey == ref {
+			return d, true
+		}
+	}
+	return Device{}, false
+}
+
+// IsActive 设备存在且未被撤销。
+func (a *Authority) IsActive(ref string) bool {
+	d, ok := a.DeviceByRef(ref)
+	return ok && !d.Revoked
+}
+
+// SetDeviceKey 已知设备重新连接时更新它的独立密钥。
+func (a *Authority) SetDeviceKey(pubB64, key string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i := range a.state.Devices {
+		d := &a.state.Devices[i]
+		if d.PublicKey != pubB64 {
+			continue
+		}
+		if d.Revoked {
+			return ErrDenied
+		}
+		old := d.ContentKey
+		d.ContentKey = key
+		if err := a.saveLocked(); err != nil {
+			d.ContentKey = old
+			return err
+		}
+		return nil
+	}
+	return ErrDenied
+}
+
 // BeginPair 登记待批准请求；不消费邀请，拒绝/取消可重试。
-func (a *Authority) BeginPair(inviteID, secret, pubB64, name string) (*Pending, error) {
+// contentKey 是手机提交的独立会话密钥（可选，旧 App 不提交）。
+func (a *Authority) BeginPair(inviteID, secret, pubB64, name string, contentKey ...string) (*Pending, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := time.Now()
@@ -333,6 +377,9 @@ func (a *Authority) BeginPair(inviteID, secret, pubB64, name string) (*Pending, 
 		InviteID:    inviteID,
 		Expires:     inv.Expires,
 		Result:      make(chan bool, 1),
+	}
+	if len(contentKey) > 0 {
+		p.ContentKey = contentKey[0]
 	}
 	a.pending[p.ID] = p
 	return p, nil
@@ -393,16 +440,19 @@ func (a *Authority) Decide(id string, approve bool) error {
 			}
 		}
 		if existing >= 0 {
-			// 重新配对：只更新名字和最近连接时间，不重复添加。
+			// 重新配对：更新名字、最近连接时间和独立密钥，不重复添加。
 			dev := &a.state.Devices[existing]
 			if dev.Revoked {
 				ok = false
 			} else {
-				oldName := dev.Name
+				oldName, oldKey := dev.Name, dev.ContentKey
 				dev.Name = p.DeviceName
 				dev.LastSeen = now
+				if p.ContentKey != "" {
+					dev.ContentKey = p.ContentKey
+				}
 				if err := a.saveLocked(); err != nil {
-					dev.Name = oldName
+					dev.Name, dev.ContentKey = oldName, oldKey
 					ok = false
 				}
 			}
@@ -412,6 +462,7 @@ func (a *Authority) Decide(id string, approve bool) error {
 				Name:        p.DeviceName,
 				PublicKey:   p.DevicePub,
 				Fingerprint: p.Fingerprint,
+				ContentKey:  p.ContentKey,
 				CreatedAt:   now,
 			})
 			if err := a.saveLocked(); err != nil {
@@ -447,9 +498,12 @@ func (a *Authority) Revoke(ref string) (Device, error) {
 			if d.Revoked {
 				return *d, nil
 			}
+			oldKey := d.ContentKey
 			d.Revoked = true
+			d.ContentKey = ""
 			if err := a.saveLocked(); err != nil {
 				d.Revoked = false
+				d.ContentKey = oldKey
 				return Device{}, err
 			}
 			return *d, nil

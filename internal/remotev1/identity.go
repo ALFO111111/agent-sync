@@ -72,17 +72,31 @@ func ProofData(nonce, devicePub, inviteID string) []byte {
 	return []byte("agent-sync-v1|" + nonce + "|" + devicePub + "|" + inviteID)
 }
 
+// ProofDataV2 把设备独立密钥也纳入签名，防止配对通道被篡改密钥。
+func ProofDataV2(nonce, devicePub, inviteID, deviceKey string) []byte {
+	return []byte("agent-sync-v2|" + nonce + "|" + devicePub + "|" + inviteID + "|" + deviceKey)
+}
+
 // SignProof 用设备私钥签名挑战。
 func (i *Identity) SignProof(nonce, inviteID string) string {
 	sig := ed25519.Sign(i.Private, ProofData(nonce, i.PublicBase64(), inviteID))
 	return base64.StdEncoding.EncodeToString(sig)
 }
 
-// VerifyProof 验证对端签名。
-func VerifyProof(pub ed25519.PublicKey, nonce, devicePub, inviteID, sigB64 string) bool {
+// SignProofV2 签名内容包含设备独立密钥。
+func (i *Identity) SignProofV2(nonce, inviteID, deviceKey string) string {
+	sig := ed25519.Sign(i.Private, ProofDataV2(nonce, i.PublicBase64(), inviteID, deviceKey))
+	return base64.StdEncoding.EncodeToString(sig)
+}
+
+// VerifyProof 验证对端签名；有 deviceKey 时按 v2 验证，否则按旧 v1（兼容旧 App）。
+func VerifyProof(pub ed25519.PublicKey, nonce, devicePub, inviteID, sigB64 string, deviceKey ...string) bool {
 	sig, err := base64.StdEncoding.DecodeString(sigB64)
 	if err != nil || len(sig) != ed25519.SignatureSize {
 		return false
+	}
+	if len(deviceKey) > 0 && deviceKey[0] != "" {
+		return ed25519.Verify(pub, ProofDataV2(nonce, devicePub, inviteID, deviceKey[0]), sig)
 	}
 	return ed25519.Verify(pub, ProofData(nonce, devicePub, inviteID), sig)
 }

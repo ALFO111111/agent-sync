@@ -62,15 +62,50 @@ func (h *Host) DeviceList() []DeviceInfo {
 	return out
 }
 
-// Revoke 撤销设备；MQTT token 到期/重连后无法再连。
-func (h *Host) Revoke(ref string) (Device, error) {
-	return h.Authority.Revoke(ref)
+// keyFor 返回某台设备的会话密钥；旧设备没有独立密钥时退回全局密钥。
+// 只查 Authority，不碰 st.mu，避免配对/回复路径的锁重入。
+func (h *Host) keyFor(did string) ContentKey {
+	if d, ok := h.Authority.DeviceByRef(did); ok && d.ContentKey != "" {
+		if k, err := ParseContentKey(d.ContentKey); err == nil {
+			return k
+		}
+	}
+	return h.contentKey()
 }
 
-// RemoveDevice 撤销并从白名单里彻底删除。
+// Revoke 撤销设备：标记撤销、清掉它的密钥和事件流；不影响其他手机。
+func (h *Host) Revoke(ref string) (Device, error) {
+	dev, err := h.Authority.Revoke(ref)
+	if err != nil {
+		return Device{}, err
+	}
+	h.dropDevice(dev)
+	return dev, nil
+}
+
+// RemoveDevice 删除设备；不轮换全局密钥，其他手机继续正常工作。
 func (h *Host) RemoveDevice(ref string) error {
-	_, err := h.Authority.RemoveDevice(ref)
-	return err
+	dev, err := h.Authority.RemoveDevice(ref)
+	if err != nil {
+		return err
+	}
+	h.dropDevice(dev)
+	return nil
+}
+
+func (h *Host) dropDevice(dev Device) {
+	h.mu.Lock()
+	var st *deviceState
+	for did, cand := range h.devices {
+		if cand.device.ID == dev.ID || did == dev.Fingerprint {
+			st = cand
+			delete(h.devices, did)
+		}
+	}
+	h.mu.Unlock()
+	if st != nil {
+		h.clearSubscriptions(st)
+	}
 }
 
 func (h *Host) readyEnvelope(deviceID string) Envelope {

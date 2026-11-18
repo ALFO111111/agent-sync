@@ -2,6 +2,7 @@
 import * as ed from '@noble/ed25519'
 import { sha256, sha512 } from '@noble/hashes/sha2.js'
 import { MQTTLink, topicSet } from './mqttlink.js'
+import { newKey } from './e2ee.js'
 
 ed.hashes.sha512 = sha512
 
@@ -307,7 +308,7 @@ export class Session {
   }
 }
 
-async function handshake(link, device, name, invitation, onPending) {
+async function handshake(link, device, name, invitation, onPending, deviceKey) {
   const hello = { v: 1, type: 'hello', devicePub: device.publicKey, deviceName: name, features: ['history.paged.v1'] }
   if (invitation) {
     hello.inviteId = invitation.id
@@ -316,30 +317,39 @@ async function handshake(link, device, name, invitation, onPending) {
   link.send(hello)
   const challenge = await link.until(m => m.type === 'challenge' || m.type === 'denied', 20000)
   if (challenge.type === 'denied') throw new Error('denied')
-  const data = `agent-sync-v1|${challenge.nonce}|${device.publicKey}|${hello.inviteId || ''}`
+  // 电脑在 challenge 里声明是否支持独立密钥；旧电脑没有这个字段，自动走 v1。
+  const supportsDeviceKey = (challenge.features || []).includes('device.key.v1')
+  const useDeviceKey = !!deviceKey && supportsDeviceKey
+  const scope = hello.inviteId || ''
+  const data = useDeviceKey
+    ? `agent-sync-v2|${challenge.nonce}|${device.publicKey}|${scope}|${deviceKey}`
+    : `agent-sync-v1|${challenge.nonce}|${device.publicKey}|${scope}`
   const signature = b64(ed.sign(enc.encode(data), unb64(device.privateKey)))
   link.send({
     v: 1,
     type: 'proof',
     devicePub: device.publicKey,
-    inviteId: hello.inviteId || '',
+    inviteId: scope,
+    deviceKey: useDeviceKey ? deviceKey : undefined,
     signature,
   })
   const first = await link.next(20000)
-  if (first.type === 'ready') return first
+  if (first.type === 'ready') return { ready: first, useDeviceKey }
   if (first.type === 'denied') throw new Error('denied')
   if (first.type === 'pending') {
     onPending?.(first.id)
     const ready = await link.until(m => m.type === 'ready' || m.type === 'denied', 360000)
     if (ready.type === 'denied') throw new Error('denied')
-    return ready
+    return { ready, useDeviceKey }
   }
   throw new Error('protocol')
 }
 
-async function connect(link, device, name, invitation, onPending) {
-  const ready = await handshake(link, device, name, invitation, onPending)
-  return new Session(link, ready, invitation, device)
+async function connect(link, device, name, invitation, onPending, deviceKey) {
+  const { ready, useDeviceKey } = await handshake(link, device, name, invitation, onPending, deviceKey)
+  const session = new Session(link, ready, invitation, device)
+  session.useDeviceKey = useDeviceKey
+  return session
 }
 
 // 首次配对：invitation 来自扫码/粘贴。
@@ -352,6 +362,7 @@ export async function pair(invitation, device, name, onPending, conn = {}) {
   const url = conn.url || invitation.url
   if (!url) throw new Error('缺少 Broker 地址')
   const topics = topicSet(invitation.uid || 'local', invitation.hostId, did)
+  const deviceKey = newKey()
   const link = await MQTTLink.create({
     url,
     username: conn.username,
@@ -363,7 +374,15 @@ export async function pair(invitation, device, name, onPending, conn = {}) {
     deviceID: did,
   })
   try {
-    return connect(link, device, name, invitation, onPending)
+    const session = await connect(link, device, name, invitation, onPending, deviceKey)
+    session.pairKey = invitation.contentKey
+    if (session.useDeviceKey) {
+      link.setKey(deviceKey)
+      session.deviceKey = deviceKey
+    } else {
+      session.deviceKey = ''
+    }
+    return session
   } catch (err) {
     link.close()
     throw err
@@ -372,25 +391,35 @@ export async function pair(invitation, device, name, onPending, conn = {}) {
 
 // 已配对设备重连：使用保存的 Broker、主题前缀和加密密钥。
 export async function reconnect(saved, device, onPending, conn = {}) {
-  if (!saved?.e2eeKey || !saved?.hostId) throw new Error('需要重新配对（缺少加密密钥）')
+  const pairKey = saved?.pairKey || saved?.e2eeKey
+  if (!pairKey || !saved?.hostId) throw new Error('需要重新配对（缺少加密密钥）')
   const did = saved.deviceId || fingerprint(device.publicKey)
   const topics = topicSet(saved.uid || 'local', saved.hostId, did)
   // 重连时把序号跳到当前时间戳：旧序号可能已经被电脑的重放窗口丢弃，
   // 导致握手消息被当成重放而永远连不上。时间戳一定大于之前的窗口。
   const startSeq = Math.max(Number(saved.seq) || 0, Date.now())
+  const deviceKey = saved.deviceKey || newKey() // 旧配对：借重连自动迁移
   const link = await MQTTLink.create({
     url: conn.url || saved.broker || saved.url,
     username: conn.username,
     password: conn.password,
     topics,
     mode: 'session',
-    contentKey: saved.e2eeKey,
+    contentKey: pairKey,
     hostID: saved.hostId,
     deviceID: did,
     startSeq,
   })
   try {
-    return await connect(link, device, saved.name, null, onPending)
+    const session = await connect(link, device, saved.name, null, onPending, deviceKey)
+    session.pairKey = pairKey
+    if (session.useDeviceKey) {
+      link.setKey(deviceKey)
+      session.deviceKey = deviceKey
+    } else {
+      session.deviceKey = ''
+    }
+    return session
   } catch (err) {
     link.close()
     throw err

@@ -22,6 +22,7 @@ type Envelope struct {
 
 	DevicePub    string `json:"devicePub,omitempty"`
 	DeviceName   string `json:"deviceName,omitempty"`
+	DeviceKey    string `json:"deviceKey,omitempty"` // 手机在 proof 里提交的独立会话密钥
 	InviteID     string `json:"inviteId,omitempty"`
 	InviteSecret string `json:"inviteSecret,omitempty"`
 	Nonce        string `json:"nonce,omitempty"`

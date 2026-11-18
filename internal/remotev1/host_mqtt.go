@@ -13,6 +13,7 @@ const (
 	streamBatch      = 40 * time.Millisecond
 	maxSubscriptions = 4
 	maxDeviceStates  = 64
+	DeviceKeyFeature = "device.key.v1"
 )
 
 type deviceState struct {
@@ -117,17 +118,29 @@ func (h *Host) onMessage(ctx context.Context, tr Transport, ts TopicSet, topic s
 		return
 	}
 	// 先解密验证，再推进重放窗口：否则任何人伪造一个大序号就能把该设备的正常指令顶死。
-	key, err := ParseContentKey(h.Authority.State().ContentKey)
-	if err != nil {
-		return
+	key := h.keyFor(did)
+	if kind == "pair" {
+		key = h.contentKey()
 	}
+	usedGlobal := false
 	plain, err := OpenFrame(key, ClientToHost, did, f.Seq, f)
+	if err != nil && kind != "pair" {
+		// 旧 App 的重连握手仍走 req 主题、用全局密钥；新 App 一律走 pair 主题。
+		plain, err = OpenFrame(h.contentKey(), ClientToHost, did, f.Seq, f)
+		usedGlobal = err == nil
+	}
 	if err != nil {
 		return
 	}
 	var env Envelope
 	if json.Unmarshal(plain, &env) != nil {
 		return
+	}
+	// 已经有独立密钥的设备，业务消息必须用独立密钥；全局密钥只允许握手。
+	if usedGlobal && env.Type != "hello" && env.Type != "proof" {
+		if d, ok := h.Authority.DeviceByRef(did); ok && d.ContentKey != "" {
+			return
+		}
 	}
 
 	h.mu.Lock()
@@ -211,7 +224,7 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 		// 新连接 = 旧连接已死，旧事件流必须停掉，否则重连会不断堆积订阅。
 		h.clearSubscriptionsLocked(st)
 		if _, err := ParsePublic(env.DevicePub); err != nil {
-			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "identity"}, 1)
+			_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "identity"}, 1)
 			return
 		}
 		st.nonce = RandomNonce()
@@ -225,36 +238,50 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 				st.historyPaged = true
 			}
 		}
-		_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{
+		_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{
 			Type: "challenge", Nonce: st.nonce, HostID: hostID, HostName: h.Name,
+			Features: []string{DeviceKeyFeature},
 		}, 1)
 
 	case "proof":
 		pub, err := ParsePublic(st.pub)
-		if err != nil || !VerifyProof(pub, st.nonce, st.pub, env.InviteID, env.Signature) {
-			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "proof"}, 1)
+		if err != nil || !VerifyProof(pub, st.nonce, st.pub, env.InviteID, env.Signature, env.DeviceKey) {
+			_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "proof"}, 1)
 			return
+		}
+		if env.DeviceKey != "" {
+			if _, err := ParseContentKey(env.DeviceKey); err != nil {
+				_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "device_key"}, 1)
+				return
+			}
 		}
 		device, known := h.Authority.Device(st.pub)
 		if known {
 			if device.Revoked {
-				_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "revoked"}, 1)
+				_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "revoked"}, 1)
 				return
 			}
+			if env.DeviceKey != "" && device.ContentKey != env.DeviceKey {
+				if err := h.Authority.SetDeviceKey(st.pub, env.DeviceKey); err != nil {
+					_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "device_key"}, 1)
+					return
+				}
+				device.ContentKey = env.DeviceKey
+			}
 			if err := h.registerDevice(ctx, hostID, did, device); err != nil {
-				_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "device_limit"}, 1)
+				_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "device_limit"}, 1)
 				return
 			}
 			st.device = device
-			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), h.readyWithCredentials(ctx, device.ID), 1)
+			_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), h.readyWithCredentials(ctx, device.ID), 1)
 			return
 		}
-		p, err := h.Authority.BeginPair(st.inviteID, st.inviteSecret, st.pub, st.name)
+		p, err := h.Authority.BeginPair(st.inviteID, st.inviteSecret, st.pub, st.name, env.DeviceKey)
 		if err != nil {
-			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "invitation"}, 1)
+			_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "invitation"}, 1)
 			return
 		}
-		_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "pending", ID: p.ID}, 1)
+		_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "pending", ID: p.ID}, 1)
 		go func() {
 			approved := <-p.Result
 			st.mu.Lock()
@@ -262,19 +289,20 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 			if approved {
 				if d, ok := h.Authority.Device(st.pub); ok {
 					if err := h.registerDevice(ctx, hostID, did, d); err != nil {
-						_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "device_limit"}, 1)
+						_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "device_limit"}, 1)
 						return
 					}
 					st.device = d
-					_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), h.readyWithCredentials(ctx, d.ID), 1)
+					_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), h.readyWithCredentials(ctx, d.ID), 1)
 					return
 				}
 			}
-			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "approval"}, 1)
+			_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "approval"}, 1)
 		}()
 
 	default:
-		if st.device.ID == "" {
+		dev := st.device
+		if dev.ID == "" || !h.Authority.IsActive(dev.ID) {
 			return
 		}
 		h.dispatchEnvelope(ctx, tr, ts, did, st, env)
@@ -286,7 +314,7 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, did string, st *deviceState, env Envelope) {
 	hostID := h.Authority.State().HostID
 	send := func(e Envelope) error {
-		return h.reply(tr, ts.Evt(), hostID, h.nextSeq(did), e, 1)
+		return h.reply(tr, ts.Evt(), did, h.nextSeq(did), e, 1)
 	}
 
 	switch env.Type {
@@ -632,7 +660,7 @@ func (h *Host) streamEvents(ctx context.Context, tr Transport, ts TopicSet, did,
 			return
 		}
 		env := Envelope{Type: "session.events", SessionKey: sessionKey, Events: buf}
-		_ = h.reply(tr, ts.Evt(), h.Authority.State().HostID, h.nextSeq(did), env, 0)
+		_ = h.reply(tr, ts.Evt(), did, h.nextSeq(did), env, 0)
 		buf = buf[:0]
 	}
 	for {
@@ -655,12 +683,22 @@ func (h *Host) streamEvents(ctx context.Context, tr Transport, ts TopicSet, did,
 	}
 }
 
-func (h *Host) reply(tr Transport, topic string, from string, seq uint64, env Envelope, qos byte) error {
+// reply 用收件设备自己的会话密钥加密业务回复。
+func (h *Host) reply(tr Transport, topic, did string, seq uint64, env Envelope, qos byte) error {
+	return h.replyWithKey(tr, topic, h.keyFor(did), seq, env, qos)
+}
+
+// replyPair 只用全局配对密钥，用于 hello/proof 阶段的 challenge/pending/ready/denied。
+func (h *Host) replyPair(tr Transport, topic string, seq uint64, env Envelope, qos byte) error {
+	return h.replyWithKey(tr, topic, h.contentKey(), seq, env, qos)
+}
+
+func (h *Host) replyWithKey(tr Transport, topic string, key ContentKey, seq uint64, env Envelope, qos byte) error {
 	plain, err := json.Marshal(env)
 	if err != nil {
 		return err
 	}
-	f, err := SealFrame(h.contentKey(), HostToClient, from, seq, plain)
+	f, err := SealFrame(key, HostToClient, h.Authority.State().HostID, seq, plain)
 	if err != nil {
 		return err
 	}
@@ -668,5 +706,7 @@ func (h *Host) reply(tr Transport, topic string, from string, seq uint64, env En
 	if err != nil {
 		return err
 	}
-	return tr.Publish(context.Background(), topic, raw, qos, false)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return tr.Publish(ctx, topic, raw, qos, false)
 }

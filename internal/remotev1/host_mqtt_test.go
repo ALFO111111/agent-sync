@@ -192,6 +192,73 @@ func TestHelloClearsPreviousSubscriptions(t *testing.T) {
 	}
 }
 
+func TestEachDeviceUsesItsOwnKey(t *testing.T) {
+	global, _ := NewContentKey()
+	k1, _ := NewContentKey()
+	k2, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, global)
+	auth.state.Devices = append(auth.state.Devices,
+		Device{ID: "d1", Fingerprint: "fp1", PublicKey: "p1", ContentKey: k1.Base64()},
+		Device{ID: "d2", Fingerprint: "fp2", PublicKey: "p2", ContentKey: k2.Base64()},
+	)
+	h := &Host{Authority: auth}
+	h.devices = map[string]*deviceState{
+		"fp1": {device: Device{ID: "d1", Fingerprint: "fp1", ContentKey: k1.Base64()}},
+		"fp2": {device: Device{ID: "d2", Fingerprint: "fp2", ContentKey: k2.Base64()}},
+	}
+	if h.keyFor("fp1").Base64() != k1.Base64() {
+		t.Fatal("fp1 key mismatch")
+	}
+	if h.keyFor("fp2").Base64() != k2.Base64() {
+		t.Fatal("fp2 key mismatch")
+	}
+	// 用 d1 的密钥加密的帧，d2 的密钥必须解不开。
+	f, err := SealFrame(k1, HostToClient, "host", 1, []byte(`{"type":"pong"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenFrame(k2, HostToClient, "host", 1, f); err == nil {
+		t.Fatal("frame encrypted for d1 must not open with d2's key")
+	}
+}
+
+func TestRemovingOneDeviceKeepsOtherDevice(t *testing.T) {
+	global, _ := NewContentKey()
+	k1, _ := NewContentKey()
+	k2, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, global)
+	auth.state.Devices = append(auth.state.Devices,
+		Device{ID: "d1", Fingerprint: "fp1", PublicKey: "p1", ContentKey: k1.Base64()},
+		Device{ID: "d2", Fingerprint: "fp2", PublicKey: "p2", ContentKey: k2.Base64()},
+	)
+	h := &Host{Authority: auth, Logf: func(string, ...any) {}}
+	cancelled := 0
+	h.devices = map[string]*deviceState{
+		"fp1": {device: Device{ID: "d1", Fingerprint: "fp1", ContentKey: k1.Base64()},
+			subs: map[string]context.CancelFunc{"s": func() { cancelled++ }}},
+		"fp2": {device: Device{ID: "d2", Fingerprint: "fp2", ContentKey: k2.Base64()},
+			subs: map[string]context.CancelFunc{}},
+	}
+	if err := h.RemoveDevice("d1"); err != nil {
+		t.Fatal(err)
+	}
+	if cancelled != 1 {
+		t.Fatalf("cancelled = %d, want 1", cancelled)
+	}
+	if _, ok := h.devices["fp1"]; ok {
+		t.Fatal("removed device state remains")
+	}
+	if _, ok := h.devices["fp2"]; !ok {
+		t.Fatal("other device state was dropped")
+	}
+	if auth.State().ContentKey != global.Base64() {
+		t.Fatal("global pairing key must not rotate")
+	}
+	if !auth.IsActive("d2") {
+		t.Fatal("other device should stay active")
+	}
+}
+
 func TestStreamEventsAreBatched(t *testing.T) {
 	key, _ := NewContentKey()
 	auth := NewMemoryAuthority(t, key)
