@@ -32,6 +32,24 @@ test('handshake messages always go to the pair topic', () => {
   assert.equal(link.topicFor({ type: 'turn.send' }), 'req')
 })
 
+test('client close invokes the onClose callback exactly once', () => {
+  let closeHandler
+  const client = {
+    on(event, fn) { if (event === 'close') closeHandler = fn },
+    subscribeAsync: async () => {}, publishAsync: async () => {}, end() {},
+  }
+  let closed = 0
+  const link = new MQTTLink({
+    client, topics: {}, mode: 'session',
+    contentKey: Buffer.alloc(32, 7).toString('base64'),
+    hostID: 'h', deviceID: 'd', onClose: () => { closed++ },
+  })
+  closeHandler()
+  closeHandler()
+  assert.equal(closed, 1)
+  assert.equal(link.closed, true)
+})
+
 test('session.events reply with an id resolves the pending request', async () => {
   const client = { on() {}, subscribeAsync: async () => {}, publishAsync: async () => {}, end() {} }
   const key = Buffer.alloc(32, 7).toString('base64')

@@ -354,7 +354,7 @@ async function connect(link, device, name, invitation, onPending, deviceKey) {
 
 // 首次配对：invitation 来自扫码/粘贴。
 // conn 提供 Broker 地址和自建用户名密码；官方模式由调用方先换好 token。
-export async function pair(invitation, device, name, onPending, conn = {}) {
+export async function pair(invitation, device, name, onPending, conn = {}, onClose) {
   if (invitation?.v !== 3 || !invitation?.contentKey || !invitation?.hostId) {
     throw new Error('邀请来自旧版本，请在电脑上重新生成')
   }
@@ -372,6 +372,7 @@ export async function pair(invitation, device, name, onPending, conn = {}) {
     contentKey: invitation.contentKey,
     hostID: invitation.hostId,
     deviceID: did,
+    onClose,
   })
   try {
     const session = await connect(link, device, name, invitation, onPending, deviceKey)
@@ -390,7 +391,7 @@ export async function pair(invitation, device, name, onPending, conn = {}) {
 }
 
 // 已配对设备重连：使用保存的 Broker、主题前缀和加密密钥。
-export async function reconnect(saved, device, onPending, conn = {}) {
+export async function reconnect(saved, device, onPending, conn = {}, onClose) {
   const pairKey = saved?.pairKey || saved?.e2eeKey
   if (!pairKey || !saved?.hostId) throw new Error('需要重新配对（缺少加密密钥）')
   const did = saved.deviceId || fingerprint(device.publicKey)
@@ -409,6 +410,7 @@ export async function reconnect(saved, device, onPending, conn = {}) {
     hostID: saved.hostId,
     deviceID: did,
     startSeq,
+    onClose,
   })
   try {
     const session = await connect(link, device, saved.name, null, onPending, deviceKey)

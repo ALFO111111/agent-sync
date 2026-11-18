@@ -73,6 +73,8 @@ let pendingText = ''
 let claudeSessionId = ""
 let lastSeq = 0
 let reconnecting = false
+let manualClose = false
+let reconnectEpoch = 0
 const mode = ref("dontAsk")
 const tab = ref("sessions")
 const sessionView = ref("projects") // projects | project
@@ -162,6 +164,10 @@ async function initUpdates() {
       else if (updateBackgrounded) {
         updateBackgrounded = false
         if (!updateBooting) updateChecker?.check()
+      }
+      // 回到前台且连接已断：立刻重连，不用等下一次心跳。
+      if (isActive && pairing.value && state.value !== 'connected' && !reconnecting && !manualClose) {
+        void autoReconnect()
       }
     })
     if (updateDisposed) await handle.remove()
@@ -331,6 +337,8 @@ async function credentialsFor(hostId, did, scope, opts = {}) {
 
 async function doPair(invitation) {
   if (!invitation?.hostId || !invitation?.contentKey) throw new Error('邀请格式不对')
+  manualClose = false
+  reconnectEpoch++
   if (invitation.mode === 'selfhost') {
     conn.value.mode = 'selfhost'
     if (invitation.url) conn.value.url = invitation.url
@@ -344,7 +352,7 @@ async function doPair(invitation) {
   message.value = '正在连接 Broker…'
   const did = fingerprint(device.value.publicKey)
   const creds = await credentialsFor(invitation.hostId, did, 'pair', { invitation })
-  session = await pair(invitation, device.value, deviceName.value, onPending, creds)
+  session = await pair(invitation, device.value, deviceName.value, onPending, creds, handleLinkClose)
   ready.value = session.ready
   const entry = {
     hostId: invitation.hostId || session.ready.hostId || '',
@@ -364,6 +372,7 @@ async function doPair(invitation) {
   await savePairingsStore(pairings.value, entry)
   if (conn.value.mode === 'official') {
     // 配对 token 只能访问 pair 主题；换正式 token 重新连接。
+    manualClose = true // 这次关闭是主动的，不要触发自动重连循环
     session.close()
     await doReconnect()
     return
@@ -372,7 +381,6 @@ async function doPair(invitation) {
   state.value = 'connected'
   message.value = `已连接到 ${pairing.value.name}`
   log('配对成功，已保存设备授权')
-  attachClose()
   loadOverview()
   loadProjects()
   tab.value = 'sessions'
@@ -380,11 +388,13 @@ async function doPair(invitation) {
 
 async function doReconnect() {
   if (!pairing.value) return
+  manualClose = false
+  reconnectEpoch++
   state.value = 'connecting'
   message.value = '正在重连…'
   const did = pairing.value.deviceId || fingerprint(device.value.publicKey)
   const creds = await credentialsFor(pairing.value.hostId, did, 'session', { saved: pairing.value })
-  session = await reconnect(pairing.value, device.value, onPending, creds)
+  session = await reconnect(pairing.value, device.value, onPending, creds, handleLinkClose)
   ready.value = session.ready
   pairing.value.pairKey = session.pairKey
   pairing.value.deviceKey = session.deviceKey || ''
@@ -394,7 +404,6 @@ async function doReconnect() {
   state.value = 'connected'
   message.value = `已连接到 ${pairing.value.name}`
   log('重连成功')
-  attachClose()
   loadOverview()
   loadProjects()
 }
@@ -421,32 +430,35 @@ const CATEGORY_LABELS = {
 const catLabel = c => CATEGORY_LABELS[c] || c
 const fmtTime = iso => (iso ? new Date(iso).toLocaleString() : '从未')
 
-function attachClose() {
-  if (!session || !session.link) return
-  session.link.onClose = () => {
-    if (reconnecting) return
-    autoReconnect()
-  }
+// 电脑端连接断开时由 MQTTLink 回调；界面立刻变成“重连中”，不要继续假装已连接。
+function handleLinkClose() {
+  if (!pairing.value || manualClose) return
+  if (reconnecting) return
+  state.value = 'reconnecting'
+  message.value = '连接已断开，正在自动重连…'
+  void autoReconnect()
 }
 
 async function autoReconnect() {
-  if (reconnecting || !pairing.value) return
+  if (reconnecting || !pairing.value || manualClose) return
   reconnecting = true
+  const epoch = ++reconnectEpoch
+  let attempt = 0
   try {
-    for (let attempt = 0; attempt < 8; attempt++) {
+    while (pairing.value && !manualClose && epoch === reconnectEpoch) {
       if (attempt > 0) await new Promise(r => setTimeout(r, Math.min(5000, 300 * 2 ** attempt)))
+      attempt++
       state.value = 'reconnecting'
       try {
         const did = pairing.value.deviceId || fingerprint(device.value.publicKey)
         const creds = await credentialsFor(pairing.value.hostId, did, 'session', { saved: pairing.value })
-        session = await reconnect(pairing.value, device.value, onPending, creds)
+        session = await reconnect(pairing.value, device.value, onPending, creds, handleLinkClose)
         ready.value = session.ready
         pairing.value.pairKey = session.pairKey
         pairing.value.deviceKey = session.deviceKey || ''
         pairing.value.e2eeKey = session.deviceKey || session.pairKey
         pairing.value.seq = session.link.seq
         await savePairingsStore(pairings.value, pairing.value)
-        attachClose()
         state.value = 'connected'
         message.value = `已重新连接 ${pairing.value.name}`
         log('自动重连成功')
@@ -473,13 +485,10 @@ async function autoReconnect() {
           void loadHistory()
         }
         return
-      } catch {
-        // 继续退避重试
+      } catch (err) {
+        log('重连失败：' + (err.message || err))
       }
     }
-    state.value = 'error'
-    message.value = '自动重连失败，请手动重连'
-    log('自动重连失败')
   } finally {
     reconnecting = false
   }
@@ -495,6 +504,7 @@ async function run(action) {
     message.value = err.message || String(err)
     log('失败：' + message.value)
     if (session) {
+      manualClose = true // 业务错误先停下来给用户看，不进入无限重连
       session.close()
       session = null
     }
@@ -527,6 +537,8 @@ function connectSaved() {
 
 // 断开并清掉当前会话（切换电脑、删除电脑、手动断开共用）。
 async function teardown() {
+  manualClose = true
+  reconnectEpoch++
   resetHistory()
   if (session && sessionKey.value) {
     try {
@@ -535,7 +547,6 @@ async function teardown() {
       // 连接已断时忽略
     }
   }
-  if (session && session.link) session.link.onClose = null
   if (session) session.close()
   session = null
   chatOpen.value = false
@@ -1544,8 +1555,10 @@ async function pickGallery() {
           {{ modeLabels[mode] || mode }} <Icon name="chevron" :size="12" />
         </button>
         <span class="chat-tool">{{ toolLabels[tool] }}</span>
-        <span v-if="!connected" class="chat-offline">连接已断开</span>
       </div>
+      <button v-if="state !== 'connected'" class="reconnect-bar" @click="handleLinkClose">
+        <Icon name="refresh" :size="14" /> 连接已断开，点此重连
+      </button>
       <div v-if="showPerm" class="perm-sheet">
         <p v-if="tool === 'codex'" class="small muted">Codex 使用沙箱限制操作，不提供逐操作审批。项目内可写允许修改项目文件；完全访问取消沙箱限制。</p>
         <button v-for="(label, key) in modeLabels" :key="key" :class="{ on: mode === key }" @click="switchMode(key); showPerm = false">
