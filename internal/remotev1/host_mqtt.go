@@ -283,21 +283,25 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 		}
 		_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "pending", ID: p.ID}, 1)
 		go func() {
-			approved := <-p.Result
-			st.mu.Lock()
-			defer st.mu.Unlock()
-			if approved {
-				if d, ok := h.Authority.Device(st.pub); ok {
-					if err := h.registerDevice(ctx, hostID, did, d); err != nil {
-						_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "device_limit"}, 1)
+			select {
+			case approved := <-p.Result:
+				st.mu.Lock()
+				defer st.mu.Unlock()
+				if approved {
+					if d, ok := h.Authority.Device(st.pub); ok {
+						if err := h.registerDevice(ctx, hostID, did, d); err != nil {
+							_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "device_limit"}, 1)
+							return
+						}
+						st.device = d
+						_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), h.readyWithCredentials(ctx, d.ID), 1)
 						return
 					}
-					st.device = d
-					_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), h.readyWithCredentials(ctx, d.ID), 1)
-					return
 				}
+				_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "approval"}, 1)
+			case <-time.After(time.Until(p.Expires)):
+				_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "expired"}, 1)
 			}
-			_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), Envelope{Type: "denied", Error: "approval"}, 1)
 		}()
 
 	default:

@@ -429,6 +429,8 @@ export default {
     selfhostInviteWarn: '自建二维码包含你的 Mosquitto 用户名和密码，不要截图或发给别人；配对完成后可关闭。建议给 agent-sync 单独建一个 Broker 用户。',
     copied: '已复制',
     pending: '待批准的设备',
+    pendingLeft: '剩余 {m} 分 {s} 秒',
+    pendingExpired: '已过期，请重新扫码',
     pendingHint: '手机第一次连进来会出现在这里',
     noPending: '没有待批准请求',
     unnamed: '未命名设备',

@@ -430,6 +430,8 @@ export default {
     selfhostInviteWarn: 'This self-hosted QR code contains your Mosquitto username and password. Do not screenshot or share it; close it after pairing. A dedicated broker user for agent-sync is recommended.',
     copied: 'Copied',
     pending: 'Pending devices',
+    pendingLeft: '{m}m {s}s left',
+    pendingExpired: 'Expired — scan again',
     pendingHint: 'A phone shows up here the first time it connects',
     noPending: 'No pending requests',
     unnamed: 'Unnamed device',

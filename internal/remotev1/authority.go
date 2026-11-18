@@ -13,7 +13,9 @@ import (
 
 const (
 	// InvitationTTL 配对邀请有效期。扫码要快，降低泄露窗口。
-	InvitationTTL  = 10 * time.Minute
+	InvitationTTL = 10 * time.Minute
+	// PendingTTL 待批准请求的有效期：用户 5 分钟不操作就自动过期。
+	PendingTTL     = 5 * time.Minute
 	maxInvitations = 8
 	maxPending     = 8
 	maxDevices     = 128
@@ -112,8 +114,19 @@ type Pending struct {
 	Fingerprint string
 	InviteID    string
 	ContentKey  string `json:"-"` // 只在内存里用，不暴露给桌面 UI
+	CreatedAt   time.Time
 	Expires     time.Time
 	Result      chan bool
+}
+
+// purgeExpiredLocked 清掉超过 5 分钟没操作的待批准请求；调用方持有 a.mu。
+// 不在这里回复：等待中的 goroutine 有自己的超时分支，负责给手机发 denied。
+func (a *Authority) purgeExpiredLocked(now time.Time) {
+	for id, p := range a.pending {
+		if now.After(p.Expires) {
+			delete(a.pending, id)
+		}
+	}
 }
 
 // Authority 管理邀请、待批准、设备白名单和撤销。
@@ -340,6 +353,7 @@ func (a *Authority) BeginPair(inviteID, secret, pubB64, name string, contentKey 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := time.Now()
+	a.purgeExpiredLocked(now)
 	if now.Sub(a.failWindow) > time.Minute {
 		a.failWindow = now
 		a.failed = 0
@@ -369,13 +383,18 @@ func (a *Authority) BeginPair(inviteID, secret, pubB64, name string, contentKey 
 			return nil, ErrDenied
 		}
 	}
+	expires := now.Add(PendingTTL)
+	if inv.Expires.Before(expires) {
+		expires = inv.Expires
+	}
 	p := &Pending{
 		ID:          RandomToken(16),
 		DeviceName:  sanitizeName(name),
 		DevicePub:   pubB64,
 		Fingerprint: FingerprintOfBase64(pubB64),
 		InviteID:    inviteID,
-		Expires:     inv.Expires,
+		CreatedAt:   now,
+		Expires:     expires,
 		Result:      make(chan bool, 1),
 	}
 	if len(contentKey) > 0 {
@@ -389,6 +408,7 @@ func (a *Authority) BeginPair(inviteID, secret, pubB64, name string, contentKey 
 func (a *Authority) PendingList() []Pending {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.purgeExpiredLocked(time.Now())
 	out := make([]Pending, 0, len(a.pending))
 	for _, p := range a.pending {
 		out = append(out, *p)
@@ -400,6 +420,7 @@ func (a *Authority) PendingList() []Pending {
 func (a *Authority) Cancel(id string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.purgeExpiredLocked(time.Now())
 	if p := a.pending[id]; p != nil {
 		delete(a.pending, id)
 		p.Result <- false
@@ -410,6 +431,7 @@ func (a *Authority) Cancel(id string) {
 func (a *Authority) Decide(id string, approve bool) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.purgeExpiredLocked(time.Now())
 	p := a.pending[id]
 	if p == nil {
 		return ErrDenied

@@ -1,6 +1,51 @@
 package remotev1
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+	"time"
+)
+
+func TestPendingExpiresAfterFiveMinutes(t *testing.T) {
+	key, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, key)
+	inv, err := auth.Invite("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := auth.BeginPair(inv.ID, inv.Secret, "pub", "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.mu.Lock()
+	auth.pending[p.ID].Expires = time.Now().Add(-time.Second)
+	auth.mu.Unlock()
+
+	if got := auth.PendingList(); len(got) != 0 {
+		t.Fatalf("pending = %d, want 0", len(got))
+	}
+	if err := auth.Decide(p.ID, true); err == nil {
+		t.Fatal("decide on expired pending should fail")
+	}
+}
+
+func TestPendingExpiryDoesNotBlockNewPairs(t *testing.T) {
+	key, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, key)
+	inv, _ := auth.Invite("host")
+	for i := 0; i < maxPending; i++ {
+		p, err := auth.BeginPair(inv.ID, inv.Secret, fmt.Sprintf("pub-%d", i), "phone")
+		if err != nil {
+			t.Fatalf("pair %d: %v", i, err)
+		}
+		auth.mu.Lock()
+		auth.pending[p.ID].Expires = time.Now().Add(-time.Second)
+		auth.mu.Unlock()
+	}
+	if _, err := auth.BeginPair(inv.ID, inv.Secret, "pub-new", "phone"); err != nil {
+		t.Fatalf("expired pendings blocked a new pair: %v", err)
+	}
+}
 
 func TestBeginPairStoresDeviceKey(t *testing.T) {
 	key, _ := NewContentKey()

@@ -136,9 +136,10 @@
         <div class="grow">
           <div><b>{{ p.deviceName || t('remote.unnamed') }}</b></div>
           <div class="muted small mono ellipsis">{{ p.fingerprint }}</div>
+          <div v-if="p.expires" class="muted small">{{ pendingLeft(p) }}</div>
         </div>
-        <button class="sm primary" :disabled="busy" @click="decide(p.id, true)">{{ t('remote.approve') }}</button>
-        <button class="sm danger" :disabled="busy" @click="decide(p.id, false)">{{ t('remote.deny') }}</button>
+        <button class="sm primary" :disabled="busy || pendingExpired(p)" @click="decide(p.id, true)">{{ t('remote.approve') }}</button>
+        <button class="sm danger" :disabled="busy || pendingExpired(p)" @click="decide(p.id, false)">{{ t('remote.deny') }}</button>
       </div>
     </div>
 
@@ -225,8 +226,10 @@ const editing = ref(false)
 const invitation = ref(null)
 const renaming = ref(null)
 const newName = ref('')
+const now = ref(Date.now())
 let loaded = ''
 let timer
+let nowTimer
 
 const MODES = {
   readonly: 'remote.modes.readonly', default: 'remote.modes.default', acceptEdits: 'remote.modes.acceptEdits',
@@ -237,6 +240,13 @@ const MODES = {
 }
 const modeLabel = (m) => (MODES[m] ? t(MODES[m]) : m || '—')
 const shortFP = (fp) => (fp && fp.length > 20 ? fp.slice(0, 10) + '…' + fp.slice(-8) : fp || '')
+const pendingExpired = (p) => !!p?.expires && new Date(p.expires).getTime() <= now.value
+const pendingLeft = (p) => {
+  if (!p?.expires) return ''
+  if (pendingExpired(p)) return t('remote.pendingExpired')
+  const total = Math.max(0, Math.ceil((new Date(p.expires).getTime() - now.value) / 1000))
+  return t('remote.pendingLeft', { m: Math.floor(total / 60), s: total % 60 })
+}
 const when = (iso) => fromNow(Date.parse(iso) || 0)
 
 async function loadConfig() {
@@ -479,11 +489,16 @@ async function saveConfig() {
 let active = false
 function schedule() {
   clearInterval(timer)
-  if (active) timer = setInterval(refresh, 3000)
+  clearInterval(nowTimer)
+  if (active) {
+    timer = setInterval(refresh, 3000)
+    nowTimer = setInterval(() => { now.value = Date.now() }, 1000)
+  }
 }
 
 onActivated(async () => {
   active = true
+  now.value = Date.now()
   await loadConfig()
   await loadAuth()
   await refresh()
@@ -493,7 +508,7 @@ onDeactivated(() => {
   active = false
   schedule()
 })
-onUnmounted(() => clearInterval(timer))
+onUnmounted(() => { clearInterval(timer); clearInterval(nowTimer) })
 </script>
 
 <style scoped>
