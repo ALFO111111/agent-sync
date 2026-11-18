@@ -79,6 +79,26 @@ test('client close invokes the onClose callback exactly once', () => {
   assert.equal(link.closed, true)
 })
 
+test('unclaimed pong messages are dropped instead of queued', () => {
+  const client = { on() {}, subscribeAsync: async () => {}, publishAsync: async () => {}, end() {} }
+  const link = new MQTTLink({
+    client, topics: {}, mode: 'session',
+    contentKey: Buffer.alloc(32, 7).toString('base64'), hostID: 'h', deviceID: 'd',
+  })
+  link.push({ type: 'pong' })
+  assert.equal(link.queue.length, 0)
+})
+
+test('response queue is capped', () => {
+  const client = { on() {}, subscribeAsync: async () => {}, publishAsync: async () => {}, end() {} }
+  const link = new MQTTLink({
+    client, topics: {}, mode: 'session',
+    contentKey: Buffer.alloc(32, 7).toString('base64'), hostID: 'h', deviceID: 'd',
+  })
+  for (let i = 0; i < 500; i++) link.push({ type: 'unknown', n: i })
+  assert.ok(link.queue.length <= 200)
+})
+
 test('session.events reply with an id resolves the pending request', async () => {
   const client = { on() {}, subscribeAsync: async () => {}, publishAsync: async () => {}, end() {} }
   const key = Buffer.alloc(32, 7).toString('base64')

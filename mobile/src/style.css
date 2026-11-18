@@ -329,6 +329,8 @@ body.barcode-scanner-active .app > .scan-overlay { visibility: visible; }
   width: 100%; padding: 9px 12px; border: 0;
   background: var(--danger, #b42318); color: #fff; font-size: 13px;
 }
+.chat-row { display: contents; }
+.md-stream { white-space: pre-wrap; word-break: break-word; }
 .jump-bottom {
   position: fixed; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); z-index: 25;
   border: 0; border-radius: 999px; padding: 8px 14px;

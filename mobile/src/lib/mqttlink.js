@@ -113,9 +113,16 @@ export class MQTTLink {
       this.onSessionEvent(msg)
       return
     }
-    const index = this.waiters.findIndex(w => !w.pred || w.pred(msg))
-    if (index >= 0) this.waiters.splice(index, 1)[0].ok(msg)
-    else this.queue.push(msg)
+    const index = msg.type === 'pong'
+      ? this.waiters.findIndex(w => w.pred ? w.pred(msg) : false)
+      : this.waiters.findIndex(w => !w.pred || w.pred(msg))
+    if (msg.type === 'pong' && index < 0) return
+    if (index >= 0) {
+      this.waiters.splice(index, 1)[0].ok(msg)
+      return
+    }
+    this.queue.push(msg)
+    if (this.queue.length > 200) this.queue.splice(0, this.queue.length - 200)
   }
 
   next(timeoutMs = 15000) {

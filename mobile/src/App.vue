@@ -60,6 +60,18 @@ const historyMore = ref(false)
 let historyTarget = null
 let historyGeneration = 0
 const displayedChat = computed(() => [...historyMessages.value, ...chat.value])
+
+let msgID = 0
+const nextMsgID = () => `m${Date.now().toString(36)}-${++msgID}`
+const CHAT_KEEP = 400
+const CHAT_MAX = 600
+function pushMsg(m) {
+  chat.value.push({ id: nextMsgID(), ...m })
+  if (chat.value.length > CHAT_MAX) chat.value.splice(0, chat.value.length - CHAT_KEEP)
+}
+
+let historyMsgID = 0
+const withHistoryIDs = msgs => msgs.map(m => (m.id ? m : { id: `h${++historyMsgID}`, ...m }))
 const chatInput = ref('')
 const attachments = ref([]) // {attachId,name,size,kind}
 const attachBusy = ref(false)
@@ -473,10 +485,10 @@ async function autoReconnect() {
               sessionKey.value = hit.key
               seqGate.reset()
               await session.subscribe(hit.key, 0, onSessionEvent)
-              chat.value.push({ role: 'notice', text: '已接回原会话' })
+              pushMsg({ role: 'notice', text: '已接回原会话' })
               log('已接回原会话')
             } else {
-              chat.value.push({ role: 'notice', text: '原会话已结束，可返回后重新开始' })
+              pushMsg({ role: 'notice', text: '原会话已结束，可返回后重新开始' })
             }
           } catch {
             // 接回失败时保持已连接状态即可
@@ -554,6 +566,7 @@ async function teardown() {
   chatOpen.value = false
   sessionKey.value = ''
   overview.value = null
+  for (const a of attachments.value) revokePreview(a)
   attachments.value = []
   state.value = 'idle'
 }
@@ -675,7 +688,9 @@ async function loadHistory(older = false) {
   try {
     const page = await linkSession.historyPage(target.tool, target.cwd, target.id, older ? historyCursor.value : '')
     if (generation !== historyGeneration || linkSession !== session) return
-    historyMessages.value = older ? [...page.messages, ...historyMessages.value] : page.messages
+    historyMessages.value = older
+      ? [...withHistoryIDs(page.messages), ...historyMessages.value]
+      : withHistoryIDs(page.messages)
     historyCursor.value = page.cursor
     historyMore.value = page.hasMore
     if (older) {
@@ -735,7 +750,7 @@ function resumeSession(s) {
 
 function ensureAssistant() {
   if (!currentAssistant) {
-    chat.value.push({ role: 'assistant', text: '' })
+    pushMsg({ role: 'assistant', text: '', streaming: true })
     currentAssistant = chat.value[chat.value.length - 1]
   }
   return currentAssistant
@@ -749,7 +764,10 @@ function startTypewriter() {
     if (!pendingText) {
       clearInterval(typeTimer)
       typeTimer = null
-      if (!generating.value) currentAssistant = null
+      if (!generating.value) {
+        if (currentAssistant) currentAssistant.streaming = false
+        currentAssistant = null
+      }
       return
     }
     const bubble = ensureAssistant()
@@ -802,7 +820,7 @@ function handleSessionEvent(ev) {
     // 思考内容也是流式的；和正文分开显示，答案开始后下一次思考再新开一块。
     thinking.value = false
     if (!currentThinking) {
-      chat.value.push({ role: 'thinking', text: '', open: true })
+      pushMsg({ role: 'thinking', text: '', open: true })
       currentThinking = chat.value[chat.value.length - 1]
     }
     currentThinking.text += ev.text || ''
@@ -823,6 +841,7 @@ function handleSessionEvent(ev) {
     const bubble = ensureAssistant()
     flushPending()
     bubble.text = ev.text || bubble.text
+    bubble.streaming = false
     if (typeTimer) {
       clearInterval(typeTimer)
       typeTimer = null
@@ -834,21 +853,21 @@ function handleSessionEvent(ev) {
     thinking.value = false
     currentThinking = null
     flushPending()
-    chat.value.push({ role: 'tool', text: `${ev.tool || '工具'} ${ev.text || ''}`.trim() })
+    pushMsg({ role: 'tool', text: `${ev.tool || '工具'} ${ev.text || ''}`.trim() })
     return
   }
   if (kind === 'tool_result') {
     return
   }
   if (kind === 'permission_denied') {
-    chat.value.push({ role: 'notice', text: `电脑端已拒绝：${ev.tool || '工具'}` })
+    pushMsg({ role: 'notice', text: `电脑端已拒绝：${ev.tool || '工具'}` })
     return
   }
   if (kind === 'approval') {
     thinking.value = false
     currentThinking = null
     flushPending()
-    chat.value.push({
+    pushMsg({
       role: 'approval',
       text: `${ev.tool || '工具'}：${ev.text || ''}`.trim(),
       approvalId: ev.approvalId,
@@ -869,7 +888,7 @@ function handleSessionEvent(ev) {
     currentThinking = null
     flushPending()
     generating.value = false
-    chat.value.push({ role: 'notice', text: `会话进程退出 ${ev.text || ''}`.trim() })
+    pushMsg({ role: 'notice', text: `会话进程退出 ${ev.text || ''}`.trim() })
     return
   }
   if (kind === 'error') {
@@ -877,7 +896,7 @@ function handleSessionEvent(ev) {
     currentThinking = null
     flushPending()
     generating.value = false
-    chat.value.push({ role: 'notice', text: ev.text || '出错了' })
+    pushMsg({ role: 'notice', text: ev.text || '出错了' })
   }
 }
 
@@ -891,7 +910,13 @@ async function waitConnected(timeout = 20000) {
   return false
 }
 
+function revokePreview(a) {
+  if (a?.preview?.startsWith('blob:')) URL.revokeObjectURL(a.preview)
+}
+
 function removeAttachment(id) {
+  const hit = attachments.value.find(a => a.attachId === id)
+  revokePreview(hit)
   attachments.value = attachments.value.filter(a => a.attachId !== id)
 }
 
@@ -908,7 +933,7 @@ function sendChat() {
     const ids = originalAttachments.map(a => a.attachId)
     if ((!text && !ids.length) || !sessionKey.value || !connected.value) return
     finishTypewriter()
-    chat.value.push({ role: 'user', text, files: originalAttachments.map(a => a.name) })
+    pushMsg({ role: 'user', text, files: originalAttachments.map(a => a.name) })
     chatInput.value = ''
     attachments.value = []
     currentAssistant = null
@@ -926,6 +951,7 @@ function sendChat() {
       notify('消息发送失败：' + (err.message || err))
       return
     }
+    for (const a of originalAttachments) revokePreview(a)
     if (chatInputEl.value) chatInputEl.value.style.height = 'auto'
     scrollChat(true)
   })
@@ -952,6 +978,7 @@ function closeChat() {
     }
     sessionKey.value = ''
     chatOpen.value = false
+    for (const a of attachments.value) revokePreview(a)
     attachments.value = []
     generating.value = false
     thinking.value = false
@@ -1060,7 +1087,7 @@ async function switchMode(next) {
       pendingText = ''
       await session.subscribe(key, 0, onSessionEvent)
     }
-    chat.value.push({
+    pushMsg({
       role: 'notice',
       text: `权限模式：${modeLabels.value[next]}${moved ? '（会话已重启，上下文保留）' : ''}`,
     })
@@ -1213,7 +1240,7 @@ async function decideApproval(item, allow) {
   try {
     await session.decide(sessionKey.value, item.approvalId, allow)
     item.decided = allow ? 'allowed' : 'denied'
-    chat.value.push({ role: 'notice', text: allow ? '已允许该操作' : '已拒绝该操作' })
+    pushMsg({ role: 'notice', text: allow ? '已允许该操作' : '已拒绝该操作' })
   } catch (err) {
     notify('审批发送失败：' + (err.message || err))
   }
@@ -1236,13 +1263,20 @@ function sessionTime(iso) {
   return Math.floor(s / 86400) + ' 天前'
 }
 
+const mdCache = new Map()
 function renderMd(text) {
   if (!text) return ''
+  const hit = mdCache.get(text)
+  if (hit) return hit
+  let html
   try {
-    return DOMPurify.sanitize(marked.parse(text, { breaks: true, gfm: true }))
+    html = DOMPurify.sanitize(marked.parse(text, { breaks: true, gfm: true }))
   } catch {
-    return text
+    html = text
   }
+  mdCache.set(text, html)
+  if (mdCache.size > 200) mdCache.delete(mdCache.keys().next().value)
+  return html
 }
 
 function growInput() {
@@ -1563,7 +1597,7 @@ async function pickGallery() {
           <template v-else-if="historyError"><span>{{ historyError }}</span><button class="sm" :disabled="!connected" @click="loadHistory()">重试</button></template>
           <button v-else-if="historyMore" class="sm" :disabled="!connected" @click="loadHistory(true)">加载更早的消息</button>
         </div>
-        <template v-for="(m, i) in displayedChat" :key="i">
+        <div v-for="m in displayedChat" :key="m.id" class="chat-row">
           <div v-if="m.role === 'user'" class="msg user">
             <div class="bubble">
               <div v-if="m.text" class="bubble-text">{{ m.text }}</div>
@@ -1582,7 +1616,8 @@ async function pickGallery() {
           </div>
           <div v-else-if="m.role === 'assistant'" class="msg assistant">
             <div class="assistant-who">{{ toolLabels[tool] }}</div>
-            <div class="md" v-html="renderMd(m.text)"></div>
+            <div v-if="m.streaming" class="md md-stream">{{ m.text }}</div>
+            <div v-else class="md" v-html="renderMd(m.text)"></div>
           </div>
           <div v-else-if="m.role === 'tool'" class="tool-line"><Icon name="search" :size="12" />{{ m.text }}</div>
           <div v-else-if="m.role === 'approval'" class="approval">
@@ -1594,7 +1629,7 @@ async function pickGallery() {
             <div v-else class="muted small">{{ m.decided === 'allowed' ? '已允许' : '已拒绝' }}</div>
           </div>
           <div v-else class="notice">{{ m.text }}</div>
-        </template>
+        </div>
         <div v-if="thinking" class="thinking-line"><span class="thinking-dot"></span>思考中</div>
         <p v-if="!displayedChat.length && !historyLoading && !historyError" class="empty chat-empty">问点什么，或者点左下角的 + 发送图片。</p>
       </div>
