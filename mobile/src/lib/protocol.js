@@ -250,6 +250,10 @@ export class Session {
     for (const ev of reply.events || []) handler({ ...ev, sessionKey })
   }
 
+  unsubscribe(sessionKey) {
+    this.link.send({ v: 1, type: 'session.unsubscribe', sessionKey })
+  }
+
   // 对话级附件：分块上传到电脑，返回 attachId；不会写入项目目录。
   async uploadAttachment({ name, mediaType, kind, data }, onProgress) {
     const id = Math.random().toString(16).slice(2, 12)

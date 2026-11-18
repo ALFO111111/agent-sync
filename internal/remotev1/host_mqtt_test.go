@@ -149,6 +149,49 @@ func TestUnknownDeviceWithoutHelloIsIgnored(t *testing.T) {
 	}
 }
 
+func TestSubscribeSameSessionReplacesOldStream(t *testing.T) {
+	st := &deviceState{subs: map[string]context.CancelFunc{}}
+	cancelled := 0
+	st.subs["sk"] = func() { cancelled++ }
+	replaceSubscription(st, "sk", func() {})
+	if cancelled != 1 {
+		t.Fatalf("old cancel calls = %d, want 1", cancelled)
+	}
+	if len(st.subs) != 1 {
+		t.Fatalf("subs = %d, want 1", len(st.subs))
+	}
+}
+
+func TestHelloClearsPreviousSubscriptions(t *testing.T) {
+	key, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, key)
+	h := &Host{Authority: auth, Logf: func(string, ...any) {}}
+	cancelled := make(chan struct{}, 2)
+	st := &deviceState{window: NewReplayWindow(1024), subs: map[string]context.CancelFunc{
+		"s1": func() { cancelled <- struct{}{} },
+		"s2": func() { cancelled <- struct{}{} },
+	}}
+	h.devices = map[string]*deviceState{"d1": st}
+
+	h.handleEnvelope(context.Background(), newFakeTransport(),
+		TopicSet{UID: "u1", HID: "h1", DID: "d1"}, "d1", "pair",
+		Envelope{Type: "hello", DevicePub: "bad"})
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-cancelled:
+		case <-time.After(time.Second):
+			t.Fatal("subscription was not cancelled")
+		}
+	}
+	st.mu.Lock()
+	n := len(st.subs)
+	st.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("subs = %d, want 0", n)
+	}
+}
+
 func TestStreamEventsAreBatched(t *testing.T) {
 	key, _ := NewContentKey()
 	auth := NewMemoryAuthority(t, key)

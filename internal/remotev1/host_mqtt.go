@@ -28,10 +28,38 @@ type deviceState struct {
 	features     []string
 	historyPaged bool
 	history      historyPager
-	subs         int
+	subs         map[string]context.CancelFunc
 	uploads      map[string]Attachment
 	lastSeen     time.Time
 	created      time.Time
+}
+
+// replaceSubscription 取消同一会话的旧流并登记新流；调用方需持有 st.mu。
+func replaceSubscription(st *deviceState, sessionKey string, cancel context.CancelFunc) {
+	if old := st.subs[sessionKey]; old != nil {
+		old()
+	}
+	st.subs[sessionKey] = cancel
+}
+
+// clearSubscriptions 取消某设备的全部订阅；设备重连时调用。
+func (h *Host) clearSubscriptions(st *deviceState) {
+	st.mu.Lock()
+	subs := st.subs
+	st.subs = map[string]context.CancelFunc{}
+	st.mu.Unlock()
+	for _, cancel := range subs {
+		cancel()
+	}
+}
+
+// clearSubscriptionsLocked 同上，但调用方已经持有 st.mu；取消动作放到独立 goroutine。
+func (h *Host) clearSubscriptionsLocked(st *deviceState) {
+	subs := st.subs
+	st.subs = map[string]context.CancelFunc{}
+	for _, cancel := range subs {
+		go cancel()
+	}
 }
 
 func (h *Host) contentKey() ContentKey {
@@ -109,7 +137,11 @@ func (h *Host) onMessage(ctx context.Context, tr Transport, ts TopicSet, topic s
 			h.mu.Unlock()
 			return
 		}
-		st = &deviceState{window: NewReplayWindow(1024), created: time.Now()}
+		st = &deviceState{
+			window:  NewReplayWindow(1024),
+			subs:    map[string]context.CancelFunc{},
+			created: time.Now(),
+		}
 		h.devices[did] = st
 		for len(h.devices) > maxDeviceStates {
 			h.evictOldestDeviceLocked()
@@ -163,7 +195,11 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 	h.mu.Lock()
 	st := h.devices[did]
 	if st == nil {
-		st = &deviceState{window: NewReplayWindow(1024)}
+		st = &deviceState{
+			window:  NewReplayWindow(1024),
+			subs:    map[string]context.CancelFunc{},
+			created: time.Now(),
+		}
 		h.devices[did] = st
 	}
 	h.mu.Unlock()
@@ -172,6 +208,8 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 
 	switch env.Type {
 	case "hello":
+		// 新连接 = 旧连接已死，旧事件流必须停掉，否则重连会不断堆积订阅。
+		h.clearSubscriptionsLocked(st)
 		if _, err := ParsePublic(env.DevicePub); err != nil {
 			_ = h.reply(tr, dts.Pair(), hostID, h.nextSeq(did), Envelope{Type: "denied", Error: "identity"}, 1)
 			return
@@ -466,25 +504,42 @@ func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, 
 		if h.Sessions == nil {
 			return
 		}
-		if st.subs >= maxSubscriptions {
-			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "too many subscriptions"})
-			return
+		if len(st.subs) >= maxSubscriptions {
+			if _, same := st.subs[env.SessionKey]; !same {
+				_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "too many subscriptions"})
+				return
+			}
 		}
+		// 同一会话先释放旧流，避免重连后重复推送。
+		if old := st.subs[env.SessionKey]; old != nil {
+			delete(st.subs, env.SessionKey)
+			go old()
+		}
+
 		history, live, cancel, err := h.Sessions.Subscribe(env.SessionKey, env.SinceSeq)
 		if err != nil {
 			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
 			return
 		}
-		st.subs++
+		replaceSubscription(st, env.SessionKey, cancel)
+
 		if send(Envelope{Type: "session.events", ID: env.ID, SessionKey: env.SessionKey, Events: history}) != nil {
+			delete(st.subs, env.SessionKey)
 			cancel()
-			st.subs--
 			return
 		}
 		go func() {
-			defer h.releaseSub(did)
+			defer h.releaseSub(did, env.SessionKey)
 			h.streamEvents(ctx, tr, ts, did, env.SessionKey, live, cancel)
 		}()
+
+	case "session.unsubscribe":
+		cancel := st.subs[env.SessionKey]
+		delete(st.subs, env.SessionKey)
+		if cancel != nil {
+			go cancel()
+		}
+		_ = send(Envelope{Type: "session.unsubscribed", ID: env.ID, SessionKey: env.SessionKey})
 
 	case "attach.begin":
 		if st.uploads == nil {
@@ -554,7 +609,7 @@ func (h *Host) registerDevice(ctx context.Context, hostID, did string, d Device)
 	return h.Auth.RegisterDevice(ctx, hostID, did, d.Name, d.PublicKey)
 }
 
-func (h *Host) releaseSub(did string) {
+func (h *Host) releaseSub(did, sessionKey string) {
 	h.mu.Lock()
 	st := h.devices[did]
 	h.mu.Unlock()
@@ -562,9 +617,7 @@ func (h *Host) releaseSub(did string) {
 		return
 	}
 	st.mu.Lock()
-	if st.subs > 0 {
-		st.subs--
-	}
+	delete(st.subs, sessionKey)
 	st.mu.Unlock()
 }
 

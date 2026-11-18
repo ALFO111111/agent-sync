@@ -963,6 +963,7 @@ function closeChat() {
   run(async () => {
     if (session && sessionKey.value) {
       try {
+        session.unsubscribe(sessionKey.value)
         await session.closeSession(sessionKey.value)
       } catch {
         // 忽略：连接已断时电脑端会自动回收
