@@ -157,7 +157,7 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 		// 断线时 Broker 会按遗嘱把状态置为 offline；重连后要重新写回 online，
 		// 否则手机一直以为电脑不在线。
 		var live atomic.Pointer[mqttlink.Link]
-		tr, err := mqttlink.New(mqttlink.Config{
+		tr, err := mqttlink.NewWithContext(ctx, mqttlink.Config{
 			URL:         broker,
 			ClientID:    state.HostID,
 			Token:       token,

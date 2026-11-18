@@ -10,6 +10,9 @@ import (
 	"time"
 )
 
+// httpClient 给 token 服务请求加总超时：ctx 已经绑定了调用方超时，这里兜底。
+var httpClient = &http.Client{Timeout: 10 * time.Second}
+
 // HTTPTokenProvider 从官方 token 服务换取短期 MQTT 凭证。
 type HTTPTokenProvider struct {
 	BaseURL      string
@@ -41,7 +44,7 @@ func (p *HTTPTokenProvider) Credentials(ctx context.Context) (string, string, er
 		return "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", "", err
 	}

@@ -36,12 +36,20 @@ type Link struct {
 	closed bool
 }
 
+// New 用 15 秒超时获取首次 token，避免调用方忘了传 ctx。
 func New(cfg Config) (*Link, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return NewWithContext(ctx, cfg)
+}
+
+// NewWithContext 用调用方 ctx 获取首次 token；token 服务卡住时能按时放弃。
+func NewWithContext(ctx context.Context, cfg Config) (*Link, error) {
 	if cfg.URL == "" || cfg.ClientID == "" || cfg.Token == nil {
 		return nil, errors.New("mqttlink: incomplete config")
 	}
 	l := &Link{cfg: cfg}
-	if err := l.connect(context.Background()); err != nil {
+	if err := l.connect(ctx); err != nil {
 		return nil, err
 	}
 	return l, nil

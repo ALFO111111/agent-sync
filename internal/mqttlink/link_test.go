@@ -7,6 +7,26 @@ import (
 	"time"
 )
 
+type blockingToken struct{}
+
+func (blockingToken) Credentials(ctx context.Context) (string, string, error) {
+	<-ctx.Done()
+	return "", "", ctx.Err()
+}
+
+func TestNewWithContextHonorsDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := NewWithContext(ctx, Config{URL: "ws://127.0.0.1:1/mqtt", ClientID: "c", Token: blockingToken{}})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("NewWithContext took %v, want <= 1s", time.Since(start))
+	}
+}
+
 func TestLinkRoundTrip(t *testing.T) {
 	url := os.Getenv("MOSQUITTO_TEST_URL")
 	if url == "" {
