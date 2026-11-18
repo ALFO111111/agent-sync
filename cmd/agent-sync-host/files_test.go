@@ -45,6 +45,26 @@ func TestReadChunks(t *testing.T) {
 	}
 }
 
+func TestReadChunkSizeIsAtLeast32KiB(t *testing.T) {
+	const want = 32 * 1024
+	content := strings.Repeat("a", 64*1024)
+	s, dir := testFiles(t, content)
+
+	text, truncated, binary, next, err := s.Read(dir, "big.txt", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binary {
+		t.Fatal("text file marked binary")
+	}
+	if len(text) < want {
+		t.Fatalf("chunk = %d bytes, want >= %d", len(text), want)
+	}
+	if !truncated || next != int64(len(text)) {
+		t.Fatalf("truncated=%v next=%d, want true/%d", truncated, next, len(text))
+	}
+}
+
 func TestReadOffsetValidation(t *testing.T) {
 	s, dir := testFiles(t, "hello")
 	if _, _, _, _, err := s.Read(dir, "big.txt", -1); err == nil {

@@ -67,6 +67,9 @@ const MAX_ATTACH = 3
 const MAX_ATTACH_BYTES = 10 * 1024 * 1024
 const TEXT_EXT = /\.(txt|md|markdown|json|jsonl|js|mjs|cjs|ts|tsx|jsx|vue|css|scss|html|xml|yml|yaml|toml|ini|cfg|conf|log|csv|tsv|py|go|rs|java|kt|kts|c|h|cpp|hpp|cs|php|rb|sh|bash|zsh|ps1|bat|cmd|sql|graphql|proto|tex)$/i
 let currentAssistant = null
+let currentThinking = null
+let typeTimer = null
+let pendingText = ''
 let claudeSessionId = ""
 let lastSeq = 0
 let reconnecting = false
@@ -75,6 +78,7 @@ const tab = ref("sessions")
 const sessionView = ref("projects") // projects | project
 const currentSession = ref(null)
 const generating = ref(false)
+const thinking = ref(false)
 const showPerm = ref(false)
 const showPlus = ref(false)
 const scanning = ref(false)
@@ -424,8 +428,8 @@ async function autoReconnect() {
   if (reconnecting || !pairing.value) return
   reconnecting = true
   try {
-    for (let attempt = 0; attempt < 6; attempt++) {
-      if (attempt > 0) await new Promise(r => setTimeout(r, Math.min(30000, 1000 * 2 ** attempt)))
+    for (let attempt = 0; attempt < 8; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, Math.min(5000, 300 * 2 ** attempt)))
       state.value = 'reconnecting'
       try {
         const did = pairing.value.deviceId || fingerprint(device.value.publicKey)
@@ -634,6 +638,9 @@ function resetHistory() {
   historyError.value = ''
   historyCursor.value = ''
   historyMore.value = false
+  finishTypewriter()
+  currentThinking = null
+  thinking.value = false
 }
 
 async function loadHistory(older = false) {
@@ -679,11 +686,12 @@ async function startChat(cwd, resumeId) {
   currentAssistant = null
   generating.value = false
   chatOpen.value = true
-  await session.subscribe(key, 0, onSessionEvent)
+  // 历史请求和 session.subscribe 互不依赖，同时发出，少等一个往返。
   if (resumeId) {
     historyTarget = { tool: tool.value, cwd, id: resumeId }
     void loadHistory()
   }
+  await session.subscribe(key, 0, onSessionEvent)
 }
 
 function newSession() {
@@ -703,6 +711,49 @@ function resumeSession(s) {
   })
 }
 
+function ensureAssistant() {
+  if (!currentAssistant) {
+    chat.value.push({ role: 'assistant', text: '' })
+    currentAssistant = chat.value[chat.value.length - 1]
+  }
+  return currentAssistant
+}
+
+// 模型（尤其带思考的模型）常在最后一次性吐出一大段。积压文本按约 1 秒的节奏
+// 逐字显示；真实流式时每帧只有一两个字，几乎无额外延迟。
+function startTypewriter() {
+  if (typeTimer) return
+  typeTimer = setInterval(() => {
+    if (!pendingText) {
+      clearInterval(typeTimer)
+      typeTimer = null
+      if (!generating.value) currentAssistant = null
+      return
+    }
+    const bubble = ensureAssistant()
+    const n = Math.max(1, Math.ceil(pendingText.length / 20))
+    bubble.text += pendingText.slice(0, n)
+    pendingText = pendingText.slice(n)
+    scrollChat()
+  }, 16)
+}
+
+function flushPending() {
+  if (pendingText && currentAssistant) {
+    currentAssistant.text += pendingText
+    pendingText = ''
+  }
+}
+
+function finishTypewriter() {
+  flushPending()
+  if (typeTimer) {
+    clearInterval(typeTimer)
+    typeTimer = null
+  }
+  currentAssistant = null
+}
+
 function onSessionEvent(ev) {
   if (ev.seq && ev.seq <= lastSeq) return
   handleSessionEvent(ev)
@@ -717,24 +768,42 @@ function handleSessionEvent(ev) {
   }
   const kind = ev.kind
   if (kind === 'init') return
-  if (kind === 'text_delta') {
-    if (!currentAssistant) {
-      chat.value.push({ role: 'assistant', text: '' })
-      currentAssistant = chat.value[chat.value.length - 1]
+  if (kind === 'thinking') {
+    // 思考内容也是流式的；和正文分开显示，答案开始后下一次思考再新开一块。
+    thinking.value = false
+    if (!currentThinking) {
+      chat.value.push({ role: 'thinking', text: '', open: true })
+      currentThinking = chat.value[chat.value.length - 1]
     }
-    currentAssistant.text += ev.text || ''
+    currentThinking.text += ev.text || ''
+    return
+  }
+  if (kind === 'text_delta') {
+    currentThinking = null
+    thinking.value = false
+    pendingText += ev.text || ''
+    ensureAssistant()
+    startTypewriter()
     return
   }
   if (kind === 'text') {
-    if (currentAssistant) {
-      currentAssistant.text = ev.text || currentAssistant.text
-    } else {
-      chat.value.push({ role: 'assistant', text: ev.text || '' })
+    // 完整的 assistant 消息会跟在 text_delta 后面，覆盖到同一个气泡里，
+    // 不能新建气泡，否则同一段回复会显示两遍。
+    currentThinking = null
+    const bubble = ensureAssistant()
+    flushPending()
+    bubble.text = ev.text || bubble.text
+    if (typeTimer) {
+      clearInterval(typeTimer)
+      typeTimer = null
     }
     currentAssistant = null
     return
   }
   if (kind === 'tool_use') {
+    thinking.value = false
+    currentThinking = null
+    flushPending()
     chat.value.push({ role: 'tool', text: `${ev.tool || '工具'} ${ev.text || ''}`.trim() })
     return
   }
@@ -746,6 +815,9 @@ function handleSessionEvent(ev) {
     return
   }
   if (kind === 'approval') {
+    thinking.value = false
+    currentThinking = null
+    flushPending()
     chat.value.push({
       role: 'approval',
       text: `${ev.tool || '工具'}：${ev.text || ''}`.trim(),
@@ -755,16 +827,25 @@ function handleSessionEvent(ev) {
     return
   }
   if (kind === 'result') {
-    currentAssistant = null
+    thinking.value = false
+    currentThinking = null
     generating.value = false
+    // 还有积压文本时让打字机继续吐完，全部显示后再结束这一段。
+    if (!pendingText) currentAssistant = null
     return
   }
   if (kind === 'exit') {
+    thinking.value = false
+    currentThinking = null
+    flushPending()
     generating.value = false
     chat.value.push({ role: 'notice', text: `会话进程退出 ${ev.text || ''}`.trim() })
     return
   }
   if (kind === 'error') {
+    thinking.value = false
+    currentThinking = null
+    flushPending()
     generating.value = false
     chat.value.push({ role: 'notice', text: ev.text || '出错了' })
   }
@@ -851,11 +932,14 @@ function sendChat() {
     const text = chatInput.value.trim()
     const ids = attachments.value.map(a => a.attachId)
     if ((!text && !ids.length) || !sessionKey.value || !connected.value) return
+    finishTypewriter()
     chat.value.push({ role: 'user', text, files: attachments.value.map(a => a.name) })
     chatInput.value = ''
     attachments.value = []
     currentAssistant = null
+    currentThinking = null
     generating.value = true
+    thinking.value = true
     try {
       await session.sendTurn(sessionKey.value, text, ids)
     } catch (err) {
@@ -869,6 +953,7 @@ function sendChat() {
 }
 
 function stopChat() {
+  thinking.value = false
   if (sessionKey.value) session.stopTurn(sessionKey.value)
 }
 
@@ -887,6 +972,9 @@ function closeChat() {
     chatOpen.value = false
     attachments.value = []
     generating.value = false
+    thinking.value = false
+    currentThinking = null
+    finishTypewriter()
     currentSession.value = null
     sessionView.value = 'project'
     if (currentProject.value) reloadSessions()
@@ -1471,6 +1559,14 @@ async function pickGallery() {
               </div>
             </div>
           </div>
+          <div v-else-if="m.role === 'thinking'" class="thinking-block">
+            <button class="thinking-head" @click="m.open = !m.open">
+              <span class="thinking-dot"></span>
+              <span>思考过程</span>
+              <span class="thinking-toggle">{{ m.open ? '收起' : '展开' }}</span>
+            </button>
+            <div v-if="m.open" class="thinking-body">{{ m.text }}</div>
+          </div>
           <div v-else-if="m.role === 'assistant'" class="msg assistant">
             <div class="assistant-who">{{ toolLabels[tool] }}</div>
             <div class="md" v-html="renderMd(m.text)"></div>
@@ -1486,6 +1582,7 @@ async function pickGallery() {
           </div>
           <div v-else class="notice">{{ m.text }}</div>
         </template>
+        <div v-if="thinking" class="thinking-line"><span class="thinking-dot"></span>思考中</div>
         <p v-if="!displayedChat.length && !historyLoading && !historyError" class="empty chat-empty">问点什么，或者点左下角的 + 发送图片和文件。</p>
       </div>
 

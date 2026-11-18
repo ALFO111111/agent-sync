@@ -18,6 +18,7 @@ func TestParseEvent(t *testing.T) {
 	}{
 		{`{"type":"system","subtype":"init","session_id":"sess-1"}`, "init", "", ""},
 		{`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"你"}}}`, "text_delta", "你", ""},
+		{`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"先想一想"}}}`, "thinking", "先想一想", ""},
 		{`{"type":"assistant","message":{"content":[{"type":"text","text":"你好"}]}}`, "text", "你好", ""},
 		{`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/a/b"}}]}}`, "tool_use", "/a/b", "Read"},
 		{`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"ok"}]}]}}`, "tool_result", "ok", ""},

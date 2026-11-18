@@ -6,9 +6,10 @@ auth.token = "<与 frps 相同>"
 # 加密 ECS 与 Mac 之间的隧道：MQTT token 在 CONNECT 密码字段里。
 transport.tls.enable = true
 
+# 官方 Broker 已迁到 ECS，Mac 只需要把 token 服务（8787）暴露给 ECS 的 go-auth。
 [[proxies]]
-name = "mqtt-ws"
+name = "auth-api"
 type = "tcp"
 localIP = "127.0.0.1"
-localPort = 8083
-remotePort = 18083
+localPort = 8787
+remotePort = 18084

@@ -2,14 +2,18 @@
 
 本文对应 0.7.0 起的 MQTT 遥控。旧 WebSocket relay 已删除。
 
+**2026-11-16 迁移：官方 Broker 从家里的 Mac mini 迁到 ECS，Mac 上的 Mosquitto 已卸载。**
+Broker 在 ECS 本地后，手机和电脑各只跨一次公网，消息往返从 116–209ms 降到 61–78ms。
+Mac 只保留账号/token 服务和 frp 隧道。
+
 ## 端口
 
 | 位置 | 端口 | 作用 |
 |---|---|---|
-| ECS nginx | 443 | TLS 终止，`/mqtt` 反代 |
+| ECS nginx | 443 | TLS 终止，`/mqtt` 反代到本机 8083 |
+| ECS Mosquitto | 8083（仅 127.0.0.1） | 官方 Broker（WebSocket） |
 | ECS frps | 7000 | frp 控制/隧道 |
-| ECS frps | 18083（仅 127.0.0.1） | 转发到 Mac 的 Mosquitto |
-| Mac | 8083（仅 127.0.0.1） | Mosquitto WebSocket |
+| ECS frps | 18084（仅 127.0.0.1） | 转发到 Mac 的 token 服务 8787，供 go-auth 回调 |
 | Mac | 8787（仅 127.0.0.1） | token 服务（官方模式） |
 
 手机和电脑统一连接：
@@ -20,67 +24,45 @@ wss://agent-sync.yirenzaowusuo.cn/mqtt
 
 注意域名是 `agent-sync`（带连字符），不是 `agent`；后者没有 DNS 记录。
 
-## ECS
+## ECS（Ubuntu 24.04）
 
-### nginx
-
-在 `agent-sync.yirenzaowusuo.cn` 的 server 块中，把原来的：
-
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:18765;
-    ...
-}
-```
-
-替换为 `deploy/nginx/mqtt.conf` 里的 `/mqtt` location。证书继续复用
-`/etc/letsencrypt/live/xlkd.yirenzaowusuo.cn/`（SAN 已包含 agent-sync 域名）。
+### 安装 Mosquitto 和编译依赖
 
 ```bash
-nginx -t && systemctl reload nginx
+apt-get update
+apt-get install -y mosquitto mosquitto-clients libmosquitto-dev libcjson-dev \
+  libssl-dev build-essential golang-go
 ```
 
-### frps
-
-`/etc/frp/frps.toml` 的 `allowPorts` 增加 18083：
-
-```toml
-{ start = 18083, end = 18083 }
-```
-
-然后：
+Ubuntu 的 `libmosquitto-dev` 不带 Broker 插件头文件，需要从同版本源码补：
 
 ```bash
-systemctl restart frps
-```
-
-**注意：** 重启 frps 会让所有 frpc 隧道短暂断开，frpc 会自动重连；xlkd 和 seaweedfs 会抖动几秒。
-
-## Mac mini（Apple Silicon）
-
-### 安装 Mosquitto
-
-```bash
-brew install mosquitto
+cd /tmp
+curl -sL -o mosquitto-2.0.18.tar.gz \
+  https://mosquitto.org/files/source/mosquitto-2.0.18.tar.gz
+tar xzf mosquitto-2.0.18.tar.gz
+cp mosquitto-2.0.18/include/*.h /usr/include/
 ```
 
 ### 编译 go-auth 插件
 
-Mac 无法直连 GitHub 时，用 Go 模块代理取源码：
+插件要求 Go >= 1.24；Ubuntu 的 Go 1.22 可以用 `GOTOOLCHAIN` 自动拉新工具链：
 
 ```bash
 export GOPROXY=https://goproxy.cn,direct
+export GOTOOLCHAIN=go1.26.11   # 或任意 >=1.24 的版本
+export GOFLAGS=-mod=mod
+
 cd /tmp
-~/sdk/go/bin/go mod download -json github.com/iegomez/mosquitto-go-auth@latest
-# 把输出里的 Dir 复制到 /tmp/mosquitto-go-auth-build
-cp -R <Dir> /tmp/mosquitto-go-auth-build
+go mod download -json \
+  github.com/iegomez/mosquitto-go-auth@v0.0.0-20250608182151-20ee9310fe3a \
+  > /tmp/plugin.json
+DIR=$(python3 -c "import json;print(json.load(open('/tmp/plugin.json'))['Dir'])")
+cp -R "$DIR" /tmp/mosquitto-go-auth-build
 cd /tmp/mosquitto-go-auth-build
-export PATH=$HOME/sdk/go/bin:$PATH
-CGO_CFLAGS="-I/opt/homebrew/include -fPIC" \
-CGO_LDFLAGS="-shared" \
-make
-sudo mkdir -p /opt/homebrew/lib/mosquitto
-sudo cp go-auth.so /opt/homebrew/lib/mosquitto/go-auth.so
+make CFLAGS="-I/usr/include -fPIC"
+strip go-auth.so
+install -m 0755 go-auth.so /usr/lib/mosquitto/go-auth.so
 ```
 
 实际使用版本：
@@ -88,62 +70,95 @@ sudo cp go-auth.so /opt/homebrew/lib/mosquitto/go-auth.so
 ```text
 module: github.com/iegomez/mosquitto-go-auth
 version: v0.0.0-20250608182151-20ee9310fe3a
-Mosquitto: 2.1.2 (Homebrew)
-Go: 1.27.2 darwin/arm64
+Mosquitto: 2.0.18 (Ubuntu)
+Go: 1.26.11 (toolchain)
 ```
 
 上游已归档；升级 Mosquitto 后必须重新编译并跑一次鉴权测试。
 
 ### 配置
 
-把 `deploy/mosquitto/mosquitto.conf` 合并进
-`/opt/homebrew/etc/mosquitto/mosquitto.conf`（先备份原文件），然后：
+把 `deploy/mosquitto/mosquitto.conf` 覆盖到 `/etc/mosquitto/mosquitto.conf`（先备份），
+然后：
 
 ```bash
-brew services restart mosquitto
+systemctl enable --now mosquitto
+systemctl restart mosquitto
 ```
 
-此时 token 服务还没启动，用 test/test 连接应该得到
-`Connection Refused: not authorized`，说明 go-auth 已生效。
+鉴权回调指向 `127.0.0.1:18084`，也就是 frp 到 Mac token 服务的隧道。
+用 test/test 连接应该得到 `Connection Refused: not authorised`。
 
-### frpc
+### nginx
 
-`~/.frpc.toml` 增加：
+把 `deploy/nginx/mqtt.conf` 放进 `agent-sync.yirenzaowusuo.cn` 的 server 块，
+`/mqtt` 反代到 `127.0.0.1:8083`，并给 `/mqtt/auth`、`/mqtt/acl` 加 404：
+
+```bash
+nginx -t && systemctl reload nginx
+```
+
+### frps
+
+`/etc/frp/frps.toml` 的 `allowPorts` 需要包含 18084：
+
+```toml
+{ start = 18084, end = 18084 }
+```
+
+## Mac mini
+
+官方 Broker 迁走后，Mac 只需要：
+
+1. token 服务（launchd `com.agentsync.auth`，127.0.0.1:8787）；
+2. frpc 的 `auth-api` 隧道（8787 → ECS 18084）；
+3. 其他原有隧道（xlkd-web、object-store）。
+
+`~/.frpc.toml`：
 
 ```toml
 transport.tls.enable = true
 
 [[proxies]]
-name = "mqtt-ws"
+name = "auth-api"
 type = "tcp"
 localIP = "127.0.0.1"
-localPort = 8083
-remotePort = 18083
+localPort = 8787
+remotePort = 18084
 ```
 
-保留原有 `xlkd-web` 和 `object-store`；旧的 `agent-sync-relay` 代理已删除。
 重启 frpc：
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.agentsync.frpc
 ```
 
-### 禁止休眠
-
-```bash
-sudo pmset -a sleep 0 disksleep 0
-```
+**2026-11-16 已删除**：Mac 上的 Mosquitto、它的 LaunchAgent、`mqtt-ws` frp 隧道。
+删除前备份在 `~/agent-sync-mosquitto-backup-20261116-225235.tar.gz`（含配置、日志、插件）。
 
 ## 验证
 
-1. 本机 WebSocket 鉴权生效：
+1. ECS 本机 WebSocket 握手：
 
 ```bash
-mosquitto_pub -L 'ws://127.0.0.1:8083/mqtt' -u test -P test -t test -m hello
-# 预期：not authorized
+curl -s -i -N --max-time 3 \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  -H "Sec-WebSocket-Protocol: mqtt" http://127.0.0.1:8083/mqtt
+# 预期：101 Switching Protocols
 ```
 
-2. 公网握手：
+2. 鉴权回调（ECS → frp → Mac）：
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  -d 'username=test.test&password=test&clientid=test' \
+  http://127.0.0.1:18084/mqtt/auth
+# 预期：403（假账号）
+```
+
+3. 公网握手：
 
 ```bash
 curl --http1.1 -i -N \
@@ -156,9 +171,9 @@ curl --http1.1 -i -N \
 # 预期：101 Switching Protocols
 ```
 
-必须带 `Sec-WebSocket-Protocol: mqtt`，并用 HTTP/1.1；Mosquitto 不接受 HTTP/2 直连的 WebSocket 升级。真实 MQTT 客户端会自动这样做。
+必须带 `Sec-WebSocket-Protocol: mqtt`，并用 HTTP/1.1；Mosquitto 不接受 HTTP/2 直连的 WebSocket 升级。
 
-3. 自建模式联调使用独立实例，不要用官方 go-auth 实例：
+4. 自建模式联调使用独立实例，不要用官方 go-auth 实例：
 
 ```bash
 docker run -d --name mqtt-selfhost -p 1883:1883 \
@@ -170,23 +185,39 @@ docker run -d --name mqtt-selfhost -p 1883:1883 \
 
 | 进程 | 位置 |
 |---|---|
-| Mosquitto | `/opt/homebrew/var/log/mosquitto/mosquitto.log` |
-| frpc | `~/Library/Logs/agentsync-frpc.log`（按 LaunchAgent 实际配置） |
-| token 服务 | `~/Library/Logs/agent-sync-auth.log` |
-| host | `~/Library/Logs/agentsync-host.log` |
+| ECS Mosquitto | `/var/log/mosquitto/mosquitto.log` |
+| ECS nginx | `/var/log/nginx/{access,error}.log` |
+| Mac frpc | `~/Library/Logs/agentsync-frpc.log`（按 LaunchAgent 实际配置） |
+| Mac token 服务 | `~/Library/Logs/agent-sync-auth.log` |
+| 电脑端 host | `%APPDATA%\AgentSync\remote\host.log`（Windows） |
 
-## 回滚
+## 回滚到 Mac Broker
 
-- nginx：恢复备份的 server 块，`systemctl reload nginx`；
-- frps：恢复 `/etc/frp/frps.toml.bak-*`，重启 frps；
-- Mac：恢复 `~/.frpc.toml` 和 Mosquitto 配置，重启对应 LaunchAgent；
-- 旧 relay 已删除；如需回滚，从 git 历史恢复旧版本并重新部署。
+1. 从备份恢复：
 
-## 验收记录（2026-11-14）
+```bash
+sudo tar xzf ~/agent-sync-mosquitto-backup-20261116-225235.tar.gz -C /
+brew install mosquitto
+brew services start mosquitto
+```
+
+2. `~/.frpc.toml` 加回 `mqtt-ws`（8083 → 18083），重启 frpc。
+3. ECS nginx 的 `/mqtt` 改回 `127.0.0.1:18083`，`nginx -t && systemctl reload nginx`。
+
+## 验收记录
+
+### 2026-11-14（Mac Broker）
 
 - Mosquitto 2.1.2 + `mosquitto-go-auth` 编译并启动，未授权连接被拒绝。
 - ECS nginx `/mqtt`、frp 18083、公网 `wss://agent-sync.yirenzaowusuo.cn/mqtt` 握手返回 101。
 - 自建模式：Windows host 连接局域网 Mosquitto，`u/local/h/{hostId}/status` 收到 `{"online":true}`。
 - 手机协议模拟（Node + mqtt.js）：配对 → 电脑批准 → ready → echo → 附件上传全部通过。
-- 旧部署已清理：Mac relay 进程/LaunchAgent、frpc `agent-sync-relay` 代理、frps 18765、nginx `/ws` 全部移除。
-- 官方模式待 token 服务 P0 上线后验收；当前只能验证鉴权链路本身（临时 200 服务放行、撤销后拒绝）。
+
+### 2026-11-16（迁移到 ECS）
+
+- ECS 2.0.18 + go-auth 插件启动，WebSocket 8083 握手 101，假账号鉴权回调 403。
+- nginx `/mqtt` 改为本机 8083，`/mqtt/auth`、`/mqtt/acl` 对外返回 404。
+- 公网 CONNECT→CONNACK（含鉴权）实测 **61–78ms**（迁移前 116–209ms）。
+- Windows host 与 Android 手机自动重连到新 Broker；项目/会话列表正常加载。
+- Mac 上的 Mosquitto、LaunchAgent 和 `mqtt-ws` 隧道已删除，仅保留 token 服务与 `auth-api` 隧道。
+- 已知问题：手机打开会话时历史记录为空；在旧 Mac Broker 上同样复现，**不是迁移导致的**，另行处理。

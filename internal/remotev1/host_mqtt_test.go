@@ -156,6 +156,32 @@ func TestStreamEventsAreBatched(t *testing.T) {
 	}
 }
 
+func TestStreamEventsFlushPromptly(t *testing.T) {
+	key, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, key)
+	h := &Host{Authority: auth, Logf: func(string, ...any) {}}
+	tr := newFakeTransport()
+	ts := TopicSet{UID: "u1", HID: "h1", DID: "d1"}
+	live := make(chan SessionEvent, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go h.streamEvents(ctx, tr, ts, "d1", "s1", live, func() {})
+	// 让 ticker 先走一段，避免把「启动时刻」算成延迟。
+	time.Sleep(20 * time.Millisecond)
+
+	start := time.Now()
+	live <- SessionEvent{Seq: 1, Kind: "text_delta", Text: "x"}
+	select {
+	case <-tr.sent:
+		if elapsed := time.Since(start); elapsed > 75*time.Millisecond {
+			t.Fatalf("first flush took %v, want <= 75ms", elapsed)
+		}
+	case <-time.After(75 * time.Millisecond):
+		t.Fatal("first event was not flushed within 75ms")
+	}
+}
+
 func readEnvelope(t *testing.T, key ContentKey, from string, seq uint64, msg struct {
 	topic   string
 	payload []byte

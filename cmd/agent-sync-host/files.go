@@ -15,7 +15,7 @@ import (
 
 const (
 	maxFileRead = 256 * 1024
-	maxChunk    = 4 * 1024
+	maxChunk    = 32 * 1024
 	maxDiff     = 8 * 1024
 	maxList     = 1000
 )

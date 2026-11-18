@@ -7,6 +7,28 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### 变更 / Changed
+
+- 官方 MQTT Broker 从 Mac mini 迁到 ECS（Mosquitto 2.0.18 + go-auth 插件）：手机和电脑各只跨一次公网，CONNECT→CONNACK 实测从 116–209ms 降到 61–78ms。Mac 上的 Mosquitto、其 LaunchAgent 和 `mqtt-ws` frp 隧道已删除，仅保留 token 服务与 `auth-api` 隧道。
+  Move the official MQTT broker from the Mac mini to the ECS (Mosquitto 2.0.18 + go-auth). Each client now crosses the public network once, cutting the CONNECT→CONNACK round trip from 116–209ms to 61–78ms. The Mac's Mosquitto, its LaunchAgent and the `mqtt-ws` frp tunnel are removed; only the token service and the `auth-api` tunnel remain.
+- 流式事件合批从 100ms 调整为 40ms，手机端更顺滑。
+  Streaming event batching drops from 100ms to 40ms for smoother mobile output.
+- 电脑端文件读取分块从 4 KiB 提升到 32 KiB，打开大文件少 8 倍往返。
+  Host file reads now use 32 KiB chunks instead of 4 KiB, cutting large-file round trips by 8×.
+- 手机 MQTT 心跳 30s → 15s，重连退避从 1–30s 缩短到 0.3–5s。
+- 手机端新增「思考中」提示、可折叠的「思考过程」实时面板和正文逐字显示：模型（尤其带思考的模型）会先思考一段时间再一次性吐出正文，现在思考内容和回答过程都能实时看到。
+  The mobile app now shows a "thinking" status, a collapsible live "thinking process" panel, and progressively typed answers, so long reasoning pauses and bursty replies stay visible.
+
+### 修复 / Fixed
+
+- 手机端把 `session.events` 的订阅回复误当成实时事件，导致打开会话后历史不加载、发消息也没有响应。现在按是否带 `id` 区分订阅回复和实时推送。
+  The mobile client mistook the `session.events` subscribe reply for a live event, so history never loaded and messages never sent. Replies with an `id` now resolve the pending request; only id-less batches go to the live handler.
+- 修复完整 assistant 消息覆盖历史时重复显示两遍的问题。
+  Fix duplicate rendering when the full assistant message arrives after streaming deltas.
+
+- 电脑端 MQTT 断线后自动重连、重新订阅、刷新 token，并在重连后重发 `{"online":true}`。此前 `AutoReconnect` 被关闭，网络抖动一次后主机会永久离线。
+  The host now reconnects automatically, re-subscribes, refreshes credentials and republishes its online status. Previously auto-reconnect was disabled, so a single network blip left the host offline forever.
+
 ## [0.7.0] - 2026-11-14
 
 ### 变更 / Changed

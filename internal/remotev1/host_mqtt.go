@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	streamBatch      = 100 * time.Millisecond
+	streamBatch      = 40 * time.Millisecond
 	maxSubscriptions = 4
 )
 

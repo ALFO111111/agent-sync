@@ -16,12 +16,23 @@ type Config struct {
 	WillTopic   string
 	WillPayload []byte
 	Token       TokenProvider
+	// OnConnect 在每次（重新）连上 Broker 后调用；用来重发保留状态。
+	OnConnect func()
+}
+
+// newClient 是 paho.NewClient 的间接层，测试里可以替换。
+var newClient = mqtt.NewClient
+
+type subscription struct {
+	filter  string
+	handler mqtt.MessageHandler
 }
 
 type Link struct {
 	cfg    Config
 	mu     sync.RWMutex
 	client mqtt.Client
+	subs   []subscription
 	closed bool
 }
 
@@ -49,11 +60,35 @@ func (l *Link) connect(ctx context.Context) error {
 	opts.SetCleanSession(true)
 	opts.SetKeepAlive(30 * time.Second)
 	opts.SetConnectTimeout(10 * time.Second)
-	opts.SetAutoReconnect(false)
+	// 断线后自动重连：否则主机掉线一次就永远不会再回来。
+	opts.SetAutoReconnect(true)
+	opts.SetMaxReconnectInterval(5 * time.Second)
+	// token 只有 10 分钟有效期，每次重连都必须重新取，不能复用首次的凭证。
+	opts.SetCredentialsProvider(func() (string, string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		user, pass, err := l.cfg.Token.Credentials(ctx)
+		if err != nil {
+			return "", ""
+		}
+		return user, pass
+	})
+	// CleanSession 为 true 时 Broker 不保留订阅，重连后必须重新订阅。
+	opts.SetOnConnectHandler(func(c mqtt.Client) {
+		l.mu.RLock()
+		subs := append([]subscription(nil), l.subs...)
+		l.mu.RUnlock()
+		for _, s := range subs {
+			c.Subscribe(s.filter, 1, s.handler)
+		}
+		if l.cfg.OnConnect != nil {
+			l.cfg.OnConnect()
+		}
+	})
 	if l.cfg.WillTopic != "" {
 		opts.SetWill(l.cfg.WillTopic, string(l.cfg.WillPayload), 1, true)
 	}
-	c := mqtt.NewClient(opts)
+	c := newClient(opts)
 	tok := c.Connect()
 	if !tok.WaitTimeout(10 * time.Second) {
 		return errors.New("mqttlink: connect timeout")
@@ -75,9 +110,14 @@ func (l *Link) Subscribe(ctx context.Context, filters []string, handler func(str
 		return errors.New("mqttlink: not connected")
 	}
 	for _, f := range filters {
-		tok := c.Subscribe(f, 1, func(_ mqtt.Client, m mqtt.Message) {
+		h := func(_ mqtt.Client, m mqtt.Message) {
 			handler(m.Topic(), m.Payload())
-		})
+		}
+		l.mu.Lock()
+		l.subs = append(l.subs, subscription{filter: f, handler: h})
+		l.mu.Unlock()
+
+		tok := c.Subscribe(f, 1, h)
 		if !tok.WaitTimeout(10*time.Second) || tok.Error() != nil {
 			return errors.New("mqttlink: subscribe failed")
 		}

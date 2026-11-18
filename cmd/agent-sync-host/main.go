@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/ALFO111111/agent-sync/internal/i18n"
@@ -22,7 +23,33 @@ import (
 var version = "dev"
 var buildID = "dev"
 
-func main() { os.Exit(run(os.Args[1:])) }
+func main() {
+	bypassProxyForAgentsync()
+	os.Exit(run(os.Args[1:]))
+}
+
+// 官方 Broker、token 服务和局域网自建 Broker 都直连，不再绕系统代理。
+// 子进程（Claude CLI）仍可用代理访问 api.deepseek.com 等外部服务。
+func bypassProxyForAgentsync() {
+	hosts := []string{"agent-sync.yirenzaowusuo.cn", "47.80.63.39", "localhost", "127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+	cur := os.Getenv("NO_PROXY")
+	have := "," + cur + ","
+	add := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if !strings.Contains(have, ","+h+",") {
+			add = append(add, h)
+		}
+	}
+	if len(add) == 0 {
+		return
+	}
+	if cur != "" {
+		cur += ","
+	}
+	value := cur + strings.Join(add, ",")
+	_ = os.Setenv("NO_PROXY", value)
+	_ = os.Setenv("no_proxy", value)
+}
 
 func defaultStateDir() string {
 	if runtime.GOOS == "darwin" {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/ALFO111111/agent-sync/internal/fsutil"
@@ -153,15 +154,29 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 			host.Auth = nil
 		}
 
+		// 断线时 Broker 会按遗嘱把状态置为 offline；重连后要重新写回 online，
+		// 否则手机一直以为电脑不在线。
+		var live atomic.Pointer[mqttlink.Link]
 		tr, err := mqttlink.New(mqttlink.Config{
 			URL:         broker,
 			ClientID:    state.HostID,
 			Token:       token,
 			WillTopic:   topics.Status(),
 			WillPayload: []byte(`{"online":false}`),
+			OnConnect: func() {
+				l := live.Load()
+				if l == nil {
+					return
+				}
+				go func() {
+					_ = l.Publish(context.Background(), topics.Status(), []byte(`{"online":true}`), 1, true)
+				}()
+			},
 		})
 		if err == nil {
+			live.Store(tr)
 			err = host.Run(ctx, tr, topics)
+			live.Store(nil)
 			tr.Close()
 		}
 		if ctx.Err() != nil {

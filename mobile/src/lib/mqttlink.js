@@ -30,7 +30,8 @@ export async function connectMQTT({ url, username, password, clientId, willTopic
     username,
     password,
     clean: true,
-    keepalive: 30,
+    // 15 秒心跳能更快发现手机息屏/切网后的假连接；断线由 App 自己重连。
+    keepalive: 15,
     reconnectPeriod: 0,
     connectTimeout: 10000,
   }
@@ -102,11 +103,13 @@ export class MQTTLink {
   }
 
   push(msg) {
-    if (msg.type === 'session.events' && this.onSessionEvent) {
+    // subscribe 的首次回复也用 session.events，但它带 id，必须交给 until()。
+    // 只有不带 id 的才是实时推送；否则 startChat 会一直等到超时。
+    if (msg.type === 'session.events' && !msg.id && this.onSessionEvent) {
       for (const ev of msg.events || []) this.onSessionEvent({ ...ev, sessionKey: msg.sessionKey })
       return
     }
-    if (msg.type === 'session.event' && this.onSessionEvent) {
+    if (msg.type === 'session.event' && !msg.id && this.onSessionEvent) {
       this.onSessionEvent(msg)
       return
     }

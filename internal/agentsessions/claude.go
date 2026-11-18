@@ -464,6 +464,9 @@ func parseEvent(line []byte) (Event, bool) {
 			if dt, _ := delta["type"].(string); dt == "text_delta" {
 				return Event{Kind: "text_delta", Text: str(delta["text"])}, true
 			}
+			if dt, _ := delta["type"].(string); dt == "thinking_delta" {
+				return Event{Kind: "thinking", Text: str(delta["thinking"])}, true
+			}
 		}
 		return Event{}, false
 	case "assistant":
