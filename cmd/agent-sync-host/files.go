@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ALFO111111/agent-sync/internal/remotev1"
 )
@@ -121,11 +123,18 @@ func (s *sessionService) Read(cwd, rel string, offset int64) (string, bool, bool
 }
 
 func gitRun(root string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-	var out, errb bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	var out limitedBuffer
+	var errb bytes.Buffer
+	out.limit = 2 << 20 // 最多留 2 MiB，避免大仓库把内存打满
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return out.String(), errors.New("git timeout")
+		}
 		msg := strings.TrimSpace(errb.String())
 		if msg == "" {
 			msg = err.Error()
@@ -133,6 +142,22 @@ func gitRun(root string, args ...string) (string, error) {
 		return out.String(), errors.New(msg)
 	}
 	return out.String(), nil
+}
+
+type limitedBuffer struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.Len() >= b.limit {
+		return len(p), nil
+	}
+	if room := b.limit - b.Len(); len(p) > room {
+		_, _ = b.Buffer.Write(p[:room])
+		return len(p), nil
+	}
+	return b.Buffer.Write(p)
 }
 
 func (s *sessionService) GitStatus(cwd string) ([]remotev1.GitChange, error) {

@@ -259,6 +259,52 @@ func TestRemovingOneDeviceKeepsOtherDevice(t *testing.T) {
 	}
 }
 
+type blockingSessions struct {
+	SessionSink
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingSessions) History(tool, cwd, sessionID string) ([]HistoryMessage, error) {
+	close(b.started)
+	<-b.release
+	return nil, nil
+}
+
+func TestSlowDeviceDoesNotBlockAnotherDevice(t *testing.T) {
+	key, _ := NewContentKey()
+	auth := NewMemoryAuthority(t, key)
+	auth.state.Devices = append(auth.state.Devices,
+		Device{ID: "slow", Fingerprint: "slow"},
+		Device{ID: "fast", Fingerprint: "fast"},
+	)
+	slow := &blockingSessions{started: make(chan struct{}), release: make(chan struct{})}
+	h := &Host{Authority: auth, Sessions: slow, Logf: func(string, ...any) {}}
+	h.devices = map[string]*deviceState{
+		"slow": {window: NewReplayWindow(1024), subs: map[string]context.CancelFunc{}, device: Device{ID: "slow"}},
+		"fast": {window: NewReplayWindow(1024), subs: map[string]context.CancelFunc{}, device: Device{ID: "fast"}},
+	}
+	tr := newFakeTransport()
+	ts := TopicSet{UID: "u1", HID: "h1", DID: "slow"}
+	// 慢设备先发一个会阻塞的请求。
+	h.enqueue(h.devices["slow"], inbound{ctx: context.Background(), tr: tr, ts: ts, did: "slow", kind: "pair",
+		env: Envelope{Type: "session.history", ID: "1", Tool: "claude", Cwd: "/", ClaudeSessionID: "s1"}})
+	<-slow.started
+	// 快设备发 ping，必须在 100ms 内收到回复。
+	start := time.Now()
+	h.enqueue(h.devices["fast"], inbound{ctx: context.Background(), tr: tr, ts: ts, did: "fast", kind: "pair",
+		env: Envelope{Type: "ping", ID: "2"}})
+	select {
+	case <-tr.sent:
+		if time.Since(start) > 100*time.Millisecond {
+			t.Fatalf("fast device waited %v", time.Since(start))
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("fast device was blocked by slow device")
+	}
+	close(slow.release)
+}
+
 func TestStreamEventsAreBatched(t *testing.T) {
 	key, _ := NewContentKey()
 	auth := NewMemoryAuthority(t, key)

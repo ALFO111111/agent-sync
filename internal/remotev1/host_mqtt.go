@@ -33,6 +33,44 @@ type deviceState struct {
 	uploads      map[string]Attachment
 	lastSeen     time.Time
 	created      time.Time
+
+	queue      chan inbound
+	workerOnce sync.Once
+}
+
+const deviceQueueSize = 64
+
+// inbound 是 paho 回调解析完的一帧；真正的业务处理放到每设备自己的队列里。
+type inbound struct {
+	ctx  context.Context
+	tr   Transport
+	ts   TopicSet
+	did  string
+	kind string
+	env  Envelope
+}
+
+func (h *Host) enqueue(st *deviceState, in inbound) {
+	st.mu.Lock()
+	if st.queue == nil {
+		st.queue = make(chan inbound, deviceQueueSize)
+	}
+	st.mu.Unlock()
+	select {
+	case st.queue <- in:
+	default:
+		if h.Logf != nil {
+			h.Logf("device %s queue full, dropping %s", in.did, in.env.Type)
+		}
+	}
+	st.workerOnce.Do(func() { go h.deviceWorker(st) })
+}
+
+// deviceWorker 每台设备一个，串行处理自己的请求；慢的文件/git/HTTP 只影响这台设备。
+func (h *Host) deviceWorker(st *deviceState) {
+	for in := range st.queue {
+		h.handleEnvelope(in.ctx, in.tr, in.ts, in.did, in.kind, in.env)
+	}
 }
 
 // replaceSubscription 取消同一会话的旧流并登记新流；调用方需持有 st.mu。
@@ -171,7 +209,7 @@ func (h *Host) onMessage(ctx context.Context, tr Transport, ts TopicSet, topic s
 	if !fresh {
 		return
 	}
-	h.handleEnvelope(ctx, tr, ts, did, kind, env)
+	h.enqueue(st, inbound{ctx: ctx, tr: tr, ts: ts, did: did, kind: kind, env: env})
 }
 
 // evictOldestDeviceLocked 在设备状态过多时丢掉最早创建的一台；调用方持有 h.mu。
