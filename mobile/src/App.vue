@@ -457,6 +457,17 @@ function handleLinkClose() {
   void autoReconnect()
 }
 
+// 横幅按钮：即使旧的重连循环卡在某个网络请求上，也能强制开一轮新的。
+function forceReconnect() {
+  if (!pairing.value) return
+  reconnectEpoch++
+  reconnecting = false
+  manualClose = false
+  state.value = 'reconnecting'
+  message.value = '正在重新连接…'
+  void autoReconnect()
+}
+
 async function autoReconnect() {
   if (reconnecting || !pairing.value || manualClose) return
   reconnecting = true
@@ -509,7 +520,7 @@ async function autoReconnect() {
       }
     }
   } finally {
-    reconnecting = false
+    if (epoch === reconnectEpoch) reconnecting = false
   }
 }
 
@@ -523,7 +534,7 @@ async function run(action) {
     message.value = err.message || String(err)
     log('失败：' + message.value)
     if (session) {
-      manualClose = true // 业务错误先停下来给用户看，不进入无限重连
+      // 关掉旧链路；如果是网络问题，onClose 会自动进入重连，不要在这里把重连停掉。
       session.close()
       session = null
     }
@@ -1589,7 +1600,7 @@ async function pickGallery() {
         </button>
         <span class="chat-tool">{{ toolLabels[tool] }}</span>
       </div>
-      <button v-if="state !== 'connected'" class="reconnect-bar" @click="handleLinkClose">
+      <button v-if="state !== 'connected'" class="reconnect-bar" @click="forceReconnect">
         <Icon name="refresh" :size="14" /> 连接已断开，点此重连
       </button>
       <div v-if="showPerm" class="perm-sheet">

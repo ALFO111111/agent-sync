@@ -10,14 +10,21 @@ export function passwordValid(p) {
 }
 
 async function post(path, body) {
-  const res = await fetch(BASE + path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`)
-  return data
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 10000)
+  try {
+    const res = await fetch(BASE + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`)
+    return data
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export const login = (username, password) => post('/v1/auth/login', { username, password })
