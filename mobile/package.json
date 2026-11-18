@@ -17,6 +17,7 @@
     "@capacitor/app": "^7.0.2",
     "@capacitor/camera": "^7.0.5",
     "@capacitor/core": "^7.4.3",
+    "@capacitor/local-notifications": "^7.0.7",
     "@noble/ciphers": "^2.4.0",
     "@noble/ed25519": "^3.2.0",
     "@noble/hashes": "^2.4.0",

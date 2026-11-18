@@ -21,6 +21,7 @@ import {
 } from './lib/protocol.js'
 import { createSeqGate } from './lib/seq.js'
 import { shouldSendOnEnter, shouldStickToBottom } from './lib/scroll.js'
+import { ensureNotifyPermission, notify as localNotify } from './lib/notify.js'
 import { secureGet, secureRemove, secureSet, storageIsSecure } from './lib/storage.js'
 import { login as authLogin, mqttToken, passwordValid, usernameValid } from './lib/auth.js'
 import { hostKey, pickActive, upsertPairing } from './lib/pairings.js'
@@ -29,6 +30,7 @@ const state = ref('idle')
 const message = ref('')
 const logs = ref([])
 const toast = ref('')
+const appActive = ref(true)
 let toastTimer
 const invitationText = ref('')
 const echoText = ref('hello')
@@ -173,6 +175,7 @@ async function initUpdates() {
   updateTimer = setTimeout(() => { updateBooting = false; updateChecker?.check() }, 8000)
   try {
     const handle = await CapApp.addListener('appStateChange', ({ isActive }) => {
+      appActive.value = isActive
       if (!isActive) updateBackgrounded = true
       else if (updateBackgrounded) {
         updateBackgrounded = false
@@ -394,6 +397,7 @@ async function doPair(invitation) {
   state.value = 'connected'
   message.value = `已连接到 ${pairing.value.name}`
   log('配对成功，已保存设备授权')
+  void ensureNotifyPermission()
   loadOverview()
   loadProjects()
   tab.value = 'sessions'
@@ -417,6 +421,7 @@ async function doReconnect() {
   state.value = 'connected'
   message.value = `已连接到 ${pairing.value.name}`
   log('重连成功')
+  void ensureNotifyPermission()
   loadOverview()
   loadProjects()
 }
@@ -873,12 +878,14 @@ function handleSessionEvent(ev) {
       approvalId: ev.approvalId,
       decided: null,
     })
+    if (!appActive.value) void localNotify('approval', ev, pairing.value?.name)
     return
   }
   if (kind === 'result') {
     thinking.value = false
     currentThinking = null
     generating.value = false
+    if (!appActive.value) void localNotify('result', ev, pairing.value?.name)
     // 还有积压文本时让打字机继续吐完，全部显示后再结束这一段。
     if (!pendingText) currentAssistant = null
     return
@@ -1001,6 +1008,7 @@ onMounted(async () => {
     await initCrypto()
     await loadOrCreateDevice()
     await loadPairings()
+    if (pairing.value) void ensureNotifyPermission()
     try {
       const rawConn = await secureGet('mqttConn')
       if (rawConn) conn.value = { ...conn.value, ...JSON.parse(rawConn) }
