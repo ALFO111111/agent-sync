@@ -949,10 +949,11 @@ function removeAttachment(id) {
 function sendChat() {
   run(async () => {
     const text = chatInput.value.trim()
-    const ids = attachments.value.map(a => a.attachId)
+    const originalAttachments = [...attachments.value]
+    const ids = originalAttachments.map(a => a.attachId)
     if ((!text && !ids.length) || !sessionKey.value || !connected.value) return
     finishTypewriter()
-    chat.value.push({ role: 'user', text, files: attachments.value.map(a => a.name) })
+    chat.value.push({ role: 'user', text, files: originalAttachments.map(a => a.name) })
     chatInput.value = ''
     attachments.value = []
     currentAssistant = null
@@ -963,8 +964,12 @@ function sendChat() {
       await session.sendTurn(sessionKey.value, text, ids)
     } catch (err) {
       generating.value = false
-      chat.value.push({ role: 'assistant', text: `消息发送失败：${err.message || err}` })
-      throw err
+      thinking.value = false
+      chat.value.pop() // 去掉乐观气泡，避免重发时出现两条
+      chatInput.value = text
+      attachments.value = originalAttachments
+      notify('消息发送失败：' + (err.message || err))
+      return
     }
     if (chatInputEl.value) chatInputEl.value.style.height = 'auto'
     scrollChat()
@@ -973,7 +978,9 @@ function sendChat() {
 
 function stopChat() {
   thinking.value = false
-  if (sessionKey.value) session.stopTurn(sessionKey.value)
+  if (sessionKey.value) {
+    session.stopTurn(sessionKey.value).catch(err => notify('停止失败：' + (err.message || err)))
+  }
 }
 
 // 返回 = 离开会话并结束电脑上的进程（对话历史仍保留，可再“继续”）。
@@ -1225,11 +1232,15 @@ function pickTool(next) {
   loadProjects()
 }
 
-function decideApproval(item, allow) {
+async function decideApproval(item, allow) {
   if (!sessionKey.value || item.decided) return
-  session.decide(sessionKey.value, item.approvalId, allow)
-  item.decided = allow ? 'allowed' : 'denied'
-  chat.value.push({ role: 'notice', text: allow ? '已允许该操作' : '已拒绝该操作' })
+  try {
+    await session.decide(sessionKey.value, item.approvalId, allow)
+    item.decided = allow ? 'allowed' : 'denied'
+    chat.value.push({ role: 'notice', text: allow ? '已允许该操作' : '已拒绝该操作' })
+  } catch (err) {
+    notify('审批发送失败：' + (err.message || err))
+  }
 }
 // ---------- 新版界面 ----------
 const pageTitle = computed(() => ({ home: '首页', sessions: '会话', settings: '设置' })[tab.value] || '')

@@ -283,16 +283,16 @@ export class Session {
   }
 
   sendTurn(sessionKey, text, attachments = []) {
-    this.link.send({ v: 1, type: 'turn.send', sessionKey, text, attachments })
+    return this.link.send({ v: 1, type: 'turn.send', sessionKey, text, attachments })
   }
 
   stopTurn(sessionKey) {
-    this.link.send({ v: 1, type: 'turn.stop', sessionKey })
+    return this.link.send({ v: 1, type: 'turn.stop', sessionKey })
   }
 
   // 回应一次工具审批。
   decide(sessionKey, approvalId, allow) {
-    this.link.send({ v: 1, type: 'approval.decide', sessionKey, approvalId, allow })
+    return this.link.send({ v: 1, type: 'approval.decide', sessionKey, approvalId, allow })
   }
 
   // 结束整个会话进程，立即释放电脑上的会话文件。

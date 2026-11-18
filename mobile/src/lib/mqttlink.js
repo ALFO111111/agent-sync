@@ -170,7 +170,16 @@ export class MQTTLink {
     if (this.closed) throw new Error('disconnected')
     const frame = seal(this.key, 'c2h', this.deviceID, ++this.seq, enc.encode(JSON.stringify(obj)))
     const qos = obj.type === 'session.event' ? 0 : 1
-    await this.client.publishAsync(this.topicFor(obj), JSON.stringify(frame), { qos })
+    const pub = this.client.publishAsync(this.topicFor(obj), JSON.stringify(frame), { qos })
+    let timer
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('publish timeout')), 10000)
+    })
+    try {
+      await Promise.race([pub, timeout])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   failAll(err) {

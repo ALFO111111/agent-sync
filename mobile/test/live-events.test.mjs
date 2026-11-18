@@ -1,7 +1,26 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { MQTTLink } from '../src/lib/mqttlink.js'
+import { Session } from '../src/lib/protocol.js'
 import { newKey, parseKey } from '../src/lib/e2ee.js'
+
+test('sendTurn rejects when the underlying publish fails', async () => {
+  const client = {
+    on() {}, subscribeAsync: async () => {},
+    publishAsync: async () => { throw new Error('broker down') },
+    end() {},
+  }
+  const link = new MQTTLink({
+    client, topics: { req: 'req', up: 'up' }, mode: 'session',
+    contentKey: Buffer.alloc(32, 7).toString('base64'), hostID: 'h', deviceID: 'd',
+  })
+  const session = new Session(link, {}, null, {})
+  try {
+    await assert.rejects(() => session.sendTurn('sk', 'hello'), /broker down/)
+  } finally {
+    session.close()
+  }
+})
 
 test('device keys are 32 random bytes and parse back', () => {
   const a = newKey()
