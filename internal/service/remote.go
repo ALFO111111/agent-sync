@@ -45,6 +45,10 @@ type RemoteStatus struct {
 	Mode           string          `json:"mode,omitempty"`
 	AccountID      string          `json:"accountId,omitempty"`
 	LoggedIn       bool            `json:"loggedIn,omitempty"`
+	Plan           string          `json:"plan,omitempty"`
+	PlanExpiresAt  int64           `json:"planExpiresAt,omitempty"`
+	UsedBytes      int64           `json:"usedBytes,omitempty"`
+	QuotaBytes     int64           `json:"quotaBytes,omitempty"`
 	Pending        []RemotePending `json:"pending,omitempty"`
 	Devices        []RemoteDevice  `json:"devices,omitempty"`
 	Active         []RemoteActive  `json:"active,omitempty"`
@@ -132,21 +136,25 @@ type remoteRequest struct {
 }
 
 type remoteResponse struct {
-	OK         bool            `json:"ok"`
-	Error      string          `json:"error,omitempty"`
-	Invitation string          `json:"invitation,omitempty"`
-	Pending    []RemotePending `json:"pending,omitempty"`
-	Devices    []RemoteDevice  `json:"devices,omitempty"`
-	Active     []RemoteActive  `json:"active,omitempty"`
-	HostID     string          `json:"hostId,omitempty"`
-	HostName   string          `json:"hostName,omitempty"`
-	Broker     string          `json:"broker,omitempty"`
-	Mode       string          `json:"mode,omitempty"`
-	AccountID  string          `json:"accountId,omitempty"`
-	LoggedIn   bool            `json:"loggedIn,omitempty"`
-	Version    string          `json:"version,omitempty"`
-	BuildID    string          `json:"buildID,omitempty"`
-	PID        int             `json:"pid,omitempty"`
+	OK            bool            `json:"ok"`
+	Error         string          `json:"error,omitempty"`
+	Invitation    string          `json:"invitation,omitempty"`
+	Pending       []RemotePending `json:"pending,omitempty"`
+	Devices       []RemoteDevice  `json:"devices,omitempty"`
+	Active        []RemoteActive  `json:"active,omitempty"`
+	HostID        string          `json:"hostId,omitempty"`
+	HostName      string          `json:"hostName,omitempty"`
+	Broker        string          `json:"broker,omitempty"`
+	Mode          string          `json:"mode,omitempty"`
+	AccountID     string          `json:"accountId,omitempty"`
+	LoggedIn      bool            `json:"loggedIn,omitempty"`
+	Plan          string          `json:"plan,omitempty"`
+	PlanExpiresAt int64           `json:"planExpiresAt,omitempty"`
+	UsedBytes     int64           `json:"usedBytes,omitempty"`
+	QuotaBytes    int64           `json:"quotaBytes,omitempty"`
+	Version       string          `json:"version,omitempty"`
+	BuildID       string          `json:"buildID,omitempty"`
+	PID           int             `json:"pid,omitempty"`
 }
 
 func remoteDial(dir string, req remoteRequest, timeout time.Duration) (remoteResponse, error) {
@@ -259,6 +267,7 @@ func GetRemoteStatus(cfg *config.Config) RemoteStatus {
 	st.Mode = resp.Mode
 	st.AccountID = resp.AccountID
 	st.LoggedIn = resp.LoggedIn
+	st.Plan, st.PlanExpiresAt, st.UsedBytes, st.QuotaBytes = resp.Plan, resp.PlanExpiresAt, resp.UsedBytes, resp.QuotaBytes
 	if list, err := remoteCall(dir, "pending", 5*time.Second); err == nil {
 		st.Pending = list.Pending
 		for i := range st.Pending {

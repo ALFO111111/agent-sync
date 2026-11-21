@@ -34,3 +34,22 @@ func TestAuthClientDeviceCredentials(t *testing.T) {
 		t.Fatalf("session token missing: %+v", got)
 	}
 }
+
+func TestAuthClientAccountUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/me":
+			_, _ = w.Write([]byte(`{"plan":"pro","planExpiresAt":123}`))
+		case "/v1/usage":
+			_, _ = w.Write([]byte(`{"usedBytes":456,"quotaBytes":789}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewAuthClient(srv.URL, "sess")
+	plan, exp, used, quota, err := c.AccountUsage(context.Background())
+	if err != nil || plan != "pro" || exp != 123 || used != 456 || quota != 789 {
+		t.Fatalf("got %q %d %d %d err=%v", plan, exp, used, quota, err)
+	}
+}

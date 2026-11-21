@@ -384,6 +384,11 @@ export default {
   remote: {
     title: '手机遥控',
     subtitle: '手机通过 MQTT 连到这台电脑，查看会话、文件和 diff，也能继续对话。聊天和改代码都发生在这台电脑上，手机只是遥控器。',
+    plan: '套餐',
+    planFree: '免费',
+    expiry: '到期',
+    usage: '本月流量',
+    upgrade: '升级 / 续费 Pro',
     running: '运行中',
     stopped: '未运行',
     hostName: '电脑名',

@@ -75,6 +75,9 @@ func (fakeRegistrar) MQTTCredentials(context.Context, string) (string, string, e
 func (fakeRegistrar) DeviceCredentials(context.Context, string, string) (string, string, error) {
 	return "device-user", "device-pass", nil
 }
+func (fakeRegistrar) AccountUsage(context.Context) (string, int64, int64, int64, error) {
+	return "free", 0, 123, 1 << 30, nil
+}
 
 func TestInviteCarriesPairCredentials(t *testing.T) {
 	store, err := newFileStore(t.TempDir())

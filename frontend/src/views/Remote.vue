@@ -23,6 +23,17 @@
         </div>
         <div v-else class="err-box mt">{{ t('remote.hostUnavailable') }}</div>
 
+        <div v-if="st.loggedIn" class="info-grid mt">
+          <div><div class="k">{{ t('remote.plan') }}</div><div class="v">{{ planLabel(st.plan) }}</div></div>
+          <div><div class="k">{{ t('remote.expiry') }}</div><div class="v">{{ fmtExpiry(st.planExpiresAt) }}</div></div>
+          <div class="wide">
+            <div class="k">{{ t('remote.usage') }}</div>
+            <div class="v">{{ fmtSize(st.usedBytes || 0) }} / {{ fmtSize(st.quotaBytes || 0) }}</div>
+            <div class="usage-bar"><i :style="{ width: usagePercent + '%' }"></i></div>
+          </div>
+          <div class="wide"><a href="#" @click.prevent="openUpgrade">{{ t('remote.upgrade') }} →</a></div>
+        </div>
+
         <div class="row wrap mt">
           <button v-if="!st.running" class="primary" :disabled="busy" @click="start">{{ busy ? t('common.working') : t('remote.start') }}</button>
           <button v-else class="danger" :disabled="busy" @click="stop">{{ busy ? t('common.working') : t('remote.stop') }}</button>
@@ -200,11 +211,11 @@
 </template>
 
 <script setup>
-import { ref, onActivated, onDeactivated, onUnmounted } from 'vue'
+import { ref, computed, onActivated, onDeactivated, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, BrowserOpenURL } from '@/api'
 import { useNotice } from '@/composables/useNotice'
-import { fromNow } from '@/utils/format'
+import { fromNow, fmtSize } from '@/utils/format'
 import Notice from '@/components/Notice.vue'
 import NavIcon from '@/components/NavIcon.vue'
 
@@ -248,6 +259,13 @@ const pendingLeft = (p) => {
   return t('remote.pendingLeft', { m: Math.floor(total / 60), s: total % 60 })
 }
 const when = (iso) => fromNow(Date.parse(iso) || 0)
+const usagePercent = computed(() => {
+  const q = Number(st.value.quotaBytes) || 0
+  return q > 0 ? Math.min(100, Math.round((Number(st.value.usedBytes) || 0) / q * 100)) : 0
+})
+const planLabel = (p) => (p === 'pro' ? 'Pro' : p === 'free' ? t('remote.planFree') : p || '—')
+const fmtExpiry = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString() : '—')
+const openUpgrade = () => BrowserOpenURL('https://agent-sync.yirenzaowusuo.cn/app/upgrade')
 
 async function loadConfig() {
   try {
@@ -516,6 +534,8 @@ onUnmounted(() => { clearInterval(timer); clearInterval(nowTimer) })
 .info-grid .wide { grid-column: 1 / -1; }
 .info-grid .k { font-size: 12px; color: var(--muted); }
 .info-grid .v { font-size: 14px; margin-top: 2px; }
+.usage-bar { height: 5px; background: var(--surface-2, var(--border)); border-radius: 999px; overflow: hidden; margin-top: 6px; }
+.usage-bar i { display: block; height: 100%; background: var(--accent, #0b6b60); }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .line { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
 .line + .line { border-top: 1px solid var(--border); }

@@ -19,6 +19,8 @@ type DeviceRegistrar interface {
 	// DeviceCredentials 取某台已登记手机的 MQTT 凭据（账号+手机绑定的 JWT），
 	// 配对成功后通过加密通道交给手机。
 	DeviceCredentials(ctx context.Context, hostID, deviceID string) (username, password string, err error)
+	// AccountUsage 取当前套餐和本月流量，用于桌面端展示。
+	AccountUsage(ctx context.Context) (plan string, planExpiresAt, usedBytes, quotaBytes int64, err error)
 }
 
 type AuthClient struct {
@@ -58,6 +60,41 @@ func (c *AuthClient) postInto(ctx context.Context, path string, body, out any) e
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (c *AuthClient) getInto(ctx context.Context, path string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.SessionToken)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("auth service: %s", resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (c *AuthClient) AccountUsage(ctx context.Context) (string, int64, int64, int64, error) {
+	var me struct {
+		Plan          string `json:"plan"`
+		PlanExpiresAt int64  `json:"planExpiresAt"`
+	}
+	if err := c.getInto(ctx, "/v1/me", &me); err != nil {
+		return "", 0, 0, 0, err
+	}
+	var usage struct {
+		UsedBytes  int64 `json:"usedBytes"`
+		QuotaBytes int64 `json:"quotaBytes"`
+	}
+	if err := c.getInto(ctx, "/v1/usage", &usage); err != nil {
+		return "", 0, 0, 0, err
+	}
+	return me.Plan, me.PlanExpiresAt, usage.UsedBytes, usage.QuotaBytes, nil
 }
 
 func (c *AuthClient) RegisterHost(ctx context.Context, hostID, name, publicKey string) error {

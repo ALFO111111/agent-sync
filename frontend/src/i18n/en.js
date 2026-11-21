@@ -385,6 +385,11 @@ export default {
   remote: {
     title: 'Phone remote',
     subtitle: 'Your phone connects to this computer through MQTT to browse sessions, files and diffs, and to continue conversations. Chatting and editing happen on this computer; the phone is just the remote.',
+    plan: 'Plan',
+    planFree: 'Free',
+    expiry: 'Expires',
+    usage: 'Traffic this month',
+    upgrade: 'Upgrade / renew Pro',
     running: 'Running',
     stopped: 'Not running',
     hostName: 'Computer',

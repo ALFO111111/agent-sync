@@ -36,22 +36,26 @@ type pendingDTO struct {
 }
 
 type ctlResponse struct {
-	OK         bool                  `json:"ok"`
-	Error      string                `json:"error,omitempty"`
-	Invitation string                `json:"invitation,omitempty"`
-	Pending    []pendingDTO          `json:"pending,omitempty"`
-	Devices    []remotev1.DeviceInfo `json:"devices,omitempty"`
-	Device     *remotev1.Device      `json:"device,omitempty"`
-	Active     []activeDTO           `json:"active,omitempty"`
-	HostID     string                `json:"hostId,omitempty"`
-	HostName   string                `json:"hostName,omitempty"`
-	Broker     string                `json:"broker,omitempty"`
-	Mode       string                `json:"mode,omitempty"`
-	AccountID  string                `json:"accountId,omitempty"`
-	LoggedIn   bool                  `json:"loggedIn,omitempty"`
-	Version    string                `json:"version,omitempty"`
-	BuildID    string                `json:"buildID,omitempty"`
-	PID        int                   `json:"pid,omitempty"`
+	OK            bool                  `json:"ok"`
+	Error         string                `json:"error,omitempty"`
+	Invitation    string                `json:"invitation,omitempty"`
+	Pending       []pendingDTO          `json:"pending,omitempty"`
+	Devices       []remotev1.DeviceInfo `json:"devices,omitempty"`
+	Device        *remotev1.Device      `json:"device,omitempty"`
+	Active        []activeDTO           `json:"active,omitempty"`
+	HostID        string                `json:"hostId,omitempty"`
+	HostName      string                `json:"hostName,omitempty"`
+	Broker        string                `json:"broker,omitempty"`
+	Mode          string                `json:"mode,omitempty"`
+	AccountID     string                `json:"accountId,omitempty"`
+	LoggedIn      bool                  `json:"loggedIn,omitempty"`
+	Plan          string                `json:"plan,omitempty"`
+	PlanExpiresAt int64                 `json:"planExpiresAt,omitempty"`
+	UsedBytes     int64                 `json:"usedBytes,omitempty"`
+	QuotaBytes    int64                 `json:"quotaBytes,omitempty"`
+	Version       string                `json:"version,omitempty"`
+	BuildID       string                `json:"buildID,omitempty"`
+	PID           int                   `json:"pid,omitempty"`
 }
 
 func controlFile(dir string) string { return filepath.Join(dir, "control") }
@@ -216,7 +220,16 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 		return ctlResponse{OK: true, AccountID: st.AccountID, LoggedIn: st.AccountID != "" && st.RefreshToken != ""}
 	case "status":
 		st := d.auth.State()
-		return ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Broker: d.broker, Mode: d.mode, AccountID: st.AccountID, LoggedIn: st.AccountID != "" && st.RefreshToken != "", Version: version, BuildID: buildID, PID: os.Getpid()}
+		resp := ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Broker: d.broker, Mode: d.mode, AccountID: st.AccountID, LoggedIn: st.AccountID != "" && st.RefreshToken != "", Version: version, BuildID: buildID, PID: os.Getpid()}
+		if d.host != nil && d.host.Auth != nil && resp.LoggedIn {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			plan, exp, used, quota, err := d.host.Auth.AccountUsage(ctx)
+			cancel()
+			if err == nil {
+				resp.Plan, resp.PlanExpiresAt, resp.UsedBytes, resp.QuotaBytes = plan, exp, used, quota
+			}
+		}
+		return resp
 	case "rotate-key":
 		if err := d.host.RotateContentKey(); err != nil {
 			return ctlResponse{Error: err.Error()}
