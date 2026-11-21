@@ -111,7 +111,7 @@ func (h *Host) dropDevice(dev Device) {
 func (h *Host) readyEnvelope(deviceID string) Envelope {
 	env := Envelope{Type: "ready", DeviceID: deviceID, HostID: h.Authority.State().HostID, HostName: h.Name}
 	if h.Sessions != nil {
-		env.Features = []string{"sessions", HistoryPagedFeature}
+		env.Features = []string{"sessions", HistoryPagedFeature, EventsChunkedFeature}
 	}
 	return env
 }

@@ -242,13 +242,41 @@ export class Session {
 
   async subscribe(sessionKey, sinceSeq, handler) {
     const id = Math.random().toString(16).slice(2, 12)
+    const chunked = (this.ready?.features || []).includes('session.events.chunked.v1')
+    const deliver = ev => handler({ ...ev, sessionKey })
+    const pending = []
+    let loading = true
     this.link.onSessionEvent = msg => {
-      if (msg.sessionKey === sessionKey) handler(msg)
+      if (msg.sessionKey !== sessionKey) return
+      // 初次历史未加载完时先缓冲实时事件，避免实时消息插到历史前面。
+      if (loading) pending.push(msg)
+      else deliver(msg)
     }
     this.link.send({ v: 1, type: 'session.subscribe', id, sessionKey, sinceSeq })
-    const reply = await this.link.until(m => m.type === 'session.events' || m.type === 'session.error', 15000)
-    if (reply.type !== 'session.events') throw new Error(reply.error || 'subscribe failed')
-    for (const ev of reply.events || []) handler({ ...ev, sessionKey })
+    if (!chunked) {
+      const reply = await this.link.until(m => m.type === 'session.events' || m.type === 'session.error', 15000)
+      if (reply.type !== 'session.events') throw new Error(reply.error || 'subscribe failed')
+      loading = false
+      for (const ev of reply.events || []) deliver(ev)
+      for (const ev of pending) deliver(ev)
+      return
+    }
+    const history = []
+    const deadline = Date.now() + 60000
+    for (;;) {
+      const reply = await this.link.until(
+        m => (m.type === 'session.events' && m.id === id) || (m.type === 'session.error' && m.id === id),
+        Math.max(1, deadline - Date.now()),
+      )
+      if (reply.type === 'session.error') throw new Error(reply.error || 'subscribe failed')
+      history.push(...(reply.events || []))
+      if (reply.done) break
+    }
+    loading = false
+    // 历史按 seq 顺序交付；缓冲的实时事件随后按 seq 交付，App 的 seqGate 会去重。
+    for (const ev of history) deliver(ev)
+    pending.sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0))
+    for (const ev of pending) deliver(ev)
   }
 
   unsubscribe(sessionKey) {

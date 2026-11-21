@@ -607,10 +607,13 @@ func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, 
 		}
 		replaceSubscription(st, env.SessionKey, cancel)
 
-		if send(Envelope{Type: "session.events", ID: env.ID, SessionKey: env.SessionKey, Events: history}) != nil {
-			delete(st.subs, env.SessionKey)
-			cancel()
-			return
+		frames := chunkSessionEvents(env.ID, env.SessionKey, history)
+		for _, f := range frames {
+			if send(f) != nil {
+				delete(st.subs, env.SessionKey)
+				cancel()
+				return
+			}
 		}
 		go func() {
 			defer h.releaseSub(did, env.SessionKey)
@@ -713,8 +716,9 @@ func (h *Host) streamEvents(ctx context.Context, tr Transport, ts TopicSet, did,
 		if len(buf) == 0 {
 			return
 		}
-		env := Envelope{Type: "session.events", SessionKey: sessionKey, Events: buf}
-		_ = h.reply(tr, ts.Evt(), did, h.nextSeq(did), env, 0)
+		for _, f := range chunkSessionEvents("", sessionKey, buf) {
+			_ = h.reply(tr, ts.Evt(), did, h.nextSeq(did), f, 0)
+		}
 		buf = buf[:0]
 	}
 	for {
