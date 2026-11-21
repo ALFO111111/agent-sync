@@ -6,7 +6,9 @@
 
 **Please do not report security issues in public issues.** Use GitHub's private reporting instead: repository page → **Security** → **Report a vulnerability**.
 
-请尽量附上：影响的版本、复现步骤、可能的影响。我们会尽快确认，修复后在发布说明里致谢（如果你愿意）。
+请尽量附上：影响的版本、复现步骤、可能的影响。我们会在 **72 小时内确认收到**，并在 **7 天内给出结论或修复计划**；修复后在发布说明里致谢（如果你愿意）。
+
+We acknowledge reports within **72 hours** and aim to give a conclusion or fix plan within **7 days**.
 
 Please include the affected version, steps to reproduce and the potential impact. We'll acknowledge it as soon as possible and credit you in the release notes once fixed (if you wish).
 
@@ -24,11 +26,12 @@ Only the latest release receives security fixes.
   The object storage only sees ciphertext and object keys (project parts of the keys are hashed)
 - 本机 `%USERPROFILE%\.agent-sync\` 下保存派生出的密钥和存储的 AccessKey（明文），依赖 Windows 账户的文件权限保护。请使用只能访问同步用 bucket 的子账号密钥
   The derived key and the storage access key (plain text) are stored under `%USERPROFILE%\.agent-sync\`, protected by Windows account file permissions. Please use a key scoped to the sync bucket only
-- 程序只和用户自己配置的对象存储通信，没有遥测；例外是检查更新（向 GitHub 查最新版本号，可在设置里关掉），下载的安装包按 Release 里的 SHA256SUMS.txt 校验后才替换
+- 程序只和用户自己配置的对象存储通信，没有遥测；例外是检查更新（先取自有 Ed25519 签名清单，验签通过才使用其中的 URL/SHA256；清单不可用才回退 GitHub API，可在设置里关掉）。安装包按清单或 Release 的 SHA256SUMS.txt 校验后才替换
   The app only talks to the object storage configured by the user; there is no telemetry. The exception is the update check (it asks GitHub for the latest version and can be turned off in Settings); a downloaded installer replaces the app only after it matches SHA256SUMS.txt from the release
 
 ## 不在范围内 / Out of scope
 
+- 官方托管下，账号元数据（用户名、设备 ID、时间、用量）对官方服务可见；会话内容仍为端到端加密。完整边界见 docs/data-boundary.md
 - 能登录你 Windows 账户的人读取本机文件（这和 Claude Code 自己的会话文件是同一个信任边界）
   Someone with access to your Windows account reading local files (the same trust boundary as Claude Code's own session files)
 - 对象存储服务商自身的安全问题

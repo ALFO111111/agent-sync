@@ -2,19 +2,18 @@
 
 本文对应 0.7.0 起的 MQTT 遥控。旧 WebSocket relay 已删除。
 
-**2026-11-16 迁移：官方 Broker 从家里的 Mac mini 迁到 ECS，Mac 上的 Mosquitto 已卸载。**
-Broker 在 ECS 本地后，手机和电脑各只跨一次公网，消息往返从 116–209ms 降到 61–78ms。
-Mac 只保留账号/token 服务和 frp 隧道。
+**2026-11-21 现状：Broker、Gate、账号服务都在 ECS 上，不再依赖 Mac mini 或 frp 隧道。**
+公网 WSS → nginx `/mqtt` → gate 8083 → Mosquitto 1884；账号/配对服务在 127.0.0.1:8787。
 
 ## 端口
 
 | 位置 | 端口 | 作用 |
 |---|---|---|
-| ECS nginx | 443 | TLS 终止，`/mqtt` 反代到本机 8083 |
-| ECS Mosquitto | 8083（仅 127.0.0.1） | 官方 Broker（WebSocket） |
-| ECS frps | 7000 | frp 控制/隧道 |
-| ECS frps | 18084（仅 127.0.0.1） | 转发到 Mac 的 token 服务 8787，供 go-auth 回调 |
-| Mac | 8787（仅 127.0.0.1） | token 服务（官方模式） |
+| ECS nginx | 443 | TLS 终止，`/mqtt` 反代到 gate 8083，`/api/*` 反代到 auth 8787 |
+| ECS gate | 8083（仅 127.0.0.1） | MQTT 凭据校验、按设备计数、撤销时踢下线 |
+| ECS Mosquitto | 1884（仅 127.0.0.1） | 官方 Broker（MQTT） |
+| ECS auth | 8787（仅 127.0.0.1） | 账号、配对令牌、MQTT JWT、计费 |
+| ECS frps | 7000 | 历史隧道；现行官方拓扑不需要 18084 |
 
 手机和电脑统一连接：
 
@@ -86,8 +85,8 @@ systemctl enable --now mosquitto
 systemctl restart mosquitto
 ```
 
-鉴权回调指向 `127.0.0.1:18084`，也就是 frp 到 Mac token 服务的隧道。
-用 test/test 连接应该得到 `Connection Refused: not authorised`。
+鉴权回调指向 `127.0.0.1:8787`（同机 auth 服务）。
+用 test/test 连接应该得到 `Connection Refused: not authorised`。`/mqtt/superuser` 必须不存在：配置里不要写 superuser URI，auth 也会对所有方法返回 403。
 
 ### nginx
 
@@ -106,13 +105,10 @@ nginx -t && systemctl reload nginx
 { start = 18084, end = 18084 }
 ```
 
-## Mac mini
+## Mac mini（历史拓扑，已废弃）
 
-官方 Broker 迁走后，Mac 只需要：
-
-1. token 服务（launchd `com.agentsync.auth`，127.0.0.1:8787）；
-2. frpc 的 `auth-api` 隧道（8787 → ECS 18084）；
-3. 其他原有隧道（xlkd-web、object-store）。
+早期部署把 token 服务放在 Mac，用 frp 把 ECS 18084 转发到 Mac 8787。现在不再需要这段；
+保留下面的配置仅用于回滚旧环境。现行部署请跳过本节。
 
 `~/.frpc.toml`：
 

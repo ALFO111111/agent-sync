@@ -8,6 +8,7 @@ proxyBindAddr = "127.0.0.1"
 allowPorts = [
   { start = 18000, end = 18000 },
   { start = 18083, end = 18083 },
+  { start = 18084, end = 18084 },
   { start = 18765, end = 18765 },
   { start = 19000, end = 19000 }
 ]
