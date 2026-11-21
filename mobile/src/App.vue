@@ -484,6 +484,13 @@ function forceReconnect() {
   void autoReconnect()
 }
 
+// 网络错误要继续退避重试；被撤销/凭据失效要停止重连并给用户明确出口。
+function isAuthFailure(message) {
+  const s = String(message || '').toLowerCase()
+  return s.includes('denied') || s.includes('not author') || s.includes('unauthorized') ||
+    s.includes('bad user') || s.includes('bad username')
+}
+
 async function autoReconnect() {
   if (reconnecting || !pairing.value || manualClose) return
   reconnecting = true
@@ -504,6 +511,7 @@ async function autoReconnect() {
         pairing.value.e2eeKey = session.deviceKey || session.pairKey
         pairing.value.seq = session.link.seq
         await savePairingsStore(pairings.value, pairing.value)
+        hostOnline.value = true
         state.value = 'connected'
         message.value = `已重新连接 ${pairing.value.name}`
         log('自动重连成功')
@@ -515,12 +523,19 @@ async function autoReconnect() {
             const hit = list.find(a => a.claudeSessionId === claudeSessionId)
             if (hit) {
               sessionKey.value = hit.key
+              const since = await readSeq(hit.key)
               seqGate.reset()
-              await session.subscribe(hit.key, 0, onSessionEvent)
+              await session.subscribe(hit.key, since, onSessionEvent)
               pushMsg({ role: 'notice', text: '已接回原会话' })
               log('已接回原会话')
             } else {
-              pushMsg({ role: 'notice', text: '原会话已结束，可返回后重新开始' })
+              // 电脑上的进程已经结束：清掉旧 key，避免继续往一个不存在的会话发消息。
+              sessionKey.value = ''
+              generating.value = false
+              thinking.value = false
+              currentThinking = null
+              clearTypewriter()
+              pushMsg({ role: 'notice', text: '原会话已结束，请重新打开' })
             }
           } catch {
             // 接回失败时保持已连接状态即可
@@ -532,7 +547,13 @@ async function autoReconnect() {
         }
         return
       } catch (err) {
-        log('重连失败：' + (err.message || err))
+        const msg = String(err?.message || err)
+        log('重连失败：' + msg)
+        if (isAuthFailure(msg)) {
+          state.value = 'revoked'
+          message.value = '设备已被撤销或凭据失效，请重新扫码配对'
+          return
+        }
       }
     }
   } finally {
@@ -835,8 +856,30 @@ function clearTypewriter() {
   pendingText = ''
 }
 
+const SESSION_SEQ_PREFIX = 'sessionSeq:'
+const seqSaveTimers = new Map()
+
+function rememberSeq(key, seq) {
+  if (!key || !Number.isFinite(seq)) return
+  const old = seqSaveTimers.get(key)
+  if (old) clearTimeout(old)
+  seqSaveTimers.set(key, setTimeout(() => {
+    seqSaveTimers.delete(key)
+    secureSet(SESSION_SEQ_PREFIX + key, String(seq)).catch(() => {})
+  }, 300))
+}
+
+async function readSeq(key) {
+  try {
+    return Number(await secureGet(SESSION_SEQ_PREFIX + key)) || 0
+  } catch {
+    return 0
+  }
+}
+
 function onSessionEvent(ev) {
   if (!seqGate.accept(ev.seq)) return
+  rememberSeq(sessionKey.value, ev.seq)
   handleSessionEvent(ev)
   scheduleScroll()
 }

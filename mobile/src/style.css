@@ -127,8 +127,8 @@ input:focus, textarea:focus { border-color: color-mix(in srgb, var(--accent) 55%
 .conn-state i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .conn-state[data-state='connected'] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
 .conn-state[data-state='connected'] i { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent); }
-.conn-state[data-state='error'] { color: var(--err); border-color: color-mix(in srgb, var(--err) 30%, transparent); }
-.conn-state[data-state='error'] i { background: var(--err); }
+.conn-state[data-state='error'], .conn-state[data-state='revoked'] { color: var(--err); border-color: color-mix(in srgb, var(--err) 30%, transparent); }
+.conn-state[data-state='error'] i, .conn-state[data-state='revoked'] i { background: var(--err); }
 .conn-state[data-state='connecting'] i, .conn-state[data-state='reconnecting'] i, .conn-state[data-state='pending'] i { background: var(--accent); animation: blink 1.2s infinite; }
 @keyframes blink { 50% { opacity: .25; } }
 
