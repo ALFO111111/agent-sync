@@ -1,19 +1,47 @@
 <template>
   <div class="remote">
+    <!-- 官方模式未登录：首屏直接给账号密码，不让用户先去找“编辑连接信息” -->
+    <div v-if="needLogin" class="card login-first">
+      <div class="card-head">
+        <h3>{{ t('remote.loginFirstTitle') }}</h3>
+        <span class="badge info">1 / 3</span>
+      </div>
+      <div class="muted small">{{ t('remote.loginFirstHint') }}</div>
+      <div class="row wrap mt">
+        <input v-model.trim="auth.username" autocomplete="username" :placeholder="t('remote.username')" @keyup.enter="submitAuth" />
+        <input v-model="auth.password" type="password" autocomplete="current-password" :placeholder="t('remote.password')" @keyup.enter="submitAuth" />
+        <button class="primary" :disabled="authBusy || !auth.username || !auth.password" @click="submitAuth">
+          {{ authBusy ? t('remote.loggingIn') : t('remote.login') }}
+        </button>
+      </div>
+      <div class="hint mt">{{ t('remote.loginCredentialHint') }}</div>
+      <div v-if="authError" class="err-box mt">{{ authError }}</div>
+      <div class="row wrap mt">
+        <a href="#" @click.prevent="openRegister">{{ t('remote.noAccount') }}</a>
+        <a href="#" @click.prevent="openDownload">{{ t('remote.downloadApp') }}</a>
+      </div>
+    </div>
+
     <!-- 连接信息：默认只读展示，右上角进入编辑；编辑时表单就在最上面 -->
     <div class="card">
       <div class="card-head">
         <h3>{{ t('remote.title') }}</h3>
         <div class="row">
-          <span class="badge" :class="st.running ? 'ok' : 'err'">{{ st.running ? t('remote.running') : t('remote.stopped') }}</span>
+          <span class="badge" :class="brokerBadgeClass">{{ st.running ? brokerStateLabel : t('remote.stopped') }}</span>
           <button v-if="!editing" class="sm ghost" :disabled="busy" @click="startEdit">
             <NavIcon name="settings" :size="13" /> {{ t('remote.editInfo') }}
           </button>
         </div>
       </div>
       <div class="muted small">{{ t('remote.subtitle') }}</div>
+      <div class="steps mt">
+        <span :class="{ on: stepIndex >= 1, done: stepIndex > 1 }">{{ t('remote.stepLogin') }}</span>
+        <span :class="{ on: stepIndex >= 2, done: stepIndex > 2 }">{{ t('remote.stepStart') }}</span>
+        <span :class="{ on: stepIndex >= 3 }">{{ t('remote.stepScan') }}</span>
+      </div>
       <div v-if="st.installError" class="err-box mt">{{ t('remote.installFailed', { error: st.installError }) }}</div>
       <div v-if="st.needsRestart" class="warn-box mt">{{ t('remote.needsRestart') }}</div>
+      <div v-if="st.running && st.lastError" class="err-box mt">{{ st.lastError }}</div>
 
       <template v-if="!editing">
         <div v-if="st.running" class="info-grid">
@@ -21,7 +49,7 @@
           <div><div class="k">{{ t('remote.brokerAddr') }}</div><div class="v mono">{{ st.broker || '—' }}</div></div>
           <div class="wide"><div class="k">{{ t('remote.hostId') }}</div><div class="v mono ellipsis">{{ st.hostId || '—' }}</div></div>
         </div>
-        <div v-else class="err-box mt">{{ t('remote.hostUnavailable') }}</div>
+        <div v-else class="info-box mt">{{ t('remote.hostNotRunning') }}</div>
 
         <div v-if="st.loggedIn" class="info-grid mt">
           <div><div class="k">{{ t('remote.plan') }}</div><div class="v">{{ planLabel(st.plan) }}</div></div>
@@ -117,6 +145,9 @@
 
       <div v-if="err" class="err-box mt">{{ err }}</div>
       <div class="warn-box mt">{{ t('remote.approvalWarn') }}</div>
+      <div class="muted small mt">
+        <a href="#" @click.prevent="openDownload">{{ t('remote.downloadApp') }} →</a>
+      </div>
     </div>
 
     <!-- 配对邀请：二维码 + 可复制的原文 -->
@@ -266,6 +297,24 @@ const usagePercent = computed(() => {
 const planLabel = (p) => (p === 'pro' ? 'Pro' : p === 'free' ? t('remote.planFree') : p || '—')
 const fmtExpiry = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString() : '—')
 const openUpgrade = () => BrowserOpenURL('https://agent-sync.yirenzaowusuo.cn/app/upgrade')
+const openDownload = () => BrowserOpenURL('https://agent-sync.yirenzaowusuo.cn/download')
+const needLogin = computed(() => !auth.value.loggedIn && (st.value.mode || form.value.mode || 'official') === 'official')
+const stepIndex = computed(() => {
+  const mode = st.value.mode || form.value.mode || 'official'
+  if (mode === 'official' && !auth.value.loggedIn) return 1
+  if (!st.value.running) return 2
+  return st.value.brokerState === 'connected' ? 3 : 2
+})
+const brokerStateLabel = computed(() => {
+  const map = { connected: 'remote.brokerConnected', connecting: 'remote.brokerConnecting', error: 'remote.brokerError' }
+  return t(map[st.value.brokerState] || 'remote.brokerDisconnected')
+})
+const brokerBadgeClass = computed(() => {
+  if (!st.value.running) return 'err'
+  if (st.value.brokerState === 'connected') return 'ok'
+  if (st.value.brokerState === 'error') return 'err'
+  return 'info'
+})
 
 async function loadConfig() {
   try {
@@ -543,6 +592,11 @@ onUnmounted(() => { clearInterval(timer); clearInterval(nowTimer) })
 .online.on { background: var(--ok); }
 .revoked-badge { margin-left: 8px; }
 .name-input { max-width: 240px; }
+.steps { display: flex; gap: 8px; flex-wrap: wrap; }
+.steps span { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.steps span.on { border-color: var(--accent); color: var(--accent); }
+.steps span.done { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.login-first { border-color: var(--accent); }
 .invite-body { display: flex; gap: 18px; align-items: flex-start; }
 .qr { width: 300px; height: 300px; border-radius: 8px; background: #fff; padding: 6px; flex: none; }
 .invite-text { width: 100%; margin: 10px 0; resize: vertical; word-break: break-all; font-size: 12px; }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +27,23 @@ type daemon struct {
 	controlToken string
 	sessions     *sessionService
 	cancel       context.CancelFunc
+
+	brokerMu    sync.RWMutex
+	brokerState string // disconnected / connecting / connected / error
+	lastError   string
+}
+
+func (d *daemon) setBroker(state, errText string) {
+	d.brokerMu.Lock()
+	d.brokerState = state
+	d.lastError = errText
+	d.brokerMu.Unlock()
+}
+
+func (d *daemon) brokerInfo() (string, string) {
+	d.brokerMu.RLock()
+	defer d.brokerMu.RUnlock()
+	return d.brokerState, d.lastError
 }
 
 func (d *daemon) stop() {
@@ -158,6 +176,7 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 		// 断线时 Broker 会按遗嘱把状态置为 offline；重连后要重新写回 online，
 		// 否则手机一直以为电脑不在线。
 		var live atomic.Pointer[mqttlink.Link]
+		d.setBroker("connecting", "")
 		tr, err := mqttlink.NewWithContext(ctx, mqttlink.Config{
 			URL:         broker,
 			ClientID:    state.HostID,
@@ -165,6 +184,7 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 			WillTopic:   topics.Status(),
 			WillPayload: []byte(`{"online":false}`),
 			OnConnect: func() {
+				d.setBroker("connected", "")
 				l := live.Load()
 				if l == nil {
 					return
@@ -181,14 +201,20 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 			tr.Close()
 		}
 		if ctx.Err() != nil {
+			d.setBroker("disconnected", "")
 			break
 		}
 		if err != nil {
+			d.setBroker("error", err.Error())
 			fmt.Fprintf(os.Stderr, "mqtt error: %v\n", err)
 			fmt.Fprintln(os.Stderr, i18n.T("正在重连 MQTT（%s）", backoff.String()))
+		} else {
+			d.setBroker("disconnected", "")
 		}
 		select {
 		case <-ctx.Done():
+			d.setBroker("disconnected", "")
+			break
 		case <-time.After(backoff):
 		}
 		if backoff < 30*time.Second {

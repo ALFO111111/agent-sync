@@ -49,6 +49,8 @@ type RemoteStatus struct {
 	PlanExpiresAt  int64           `json:"planExpiresAt,omitempty"`
 	UsedBytes      int64           `json:"usedBytes,omitempty"`
 	QuotaBytes     int64           `json:"quotaBytes,omitempty"`
+	BrokerState    string          `json:"brokerState,omitempty"` // disconnected / connecting / connected / error
+	LastError      string          `json:"lastError,omitempty"`
 	Pending        []RemotePending `json:"pending,omitempty"`
 	Devices        []RemoteDevice  `json:"devices,omitempty"`
 	Active         []RemoteActive  `json:"active,omitempty"`
@@ -160,6 +162,8 @@ type remoteResponse struct {
 	PlanExpiresAt int64           `json:"planExpiresAt,omitempty"`
 	UsedBytes     int64           `json:"usedBytes,omitempty"`
 	QuotaBytes    int64           `json:"quotaBytes,omitempty"`
+	BrokerState   string          `json:"brokerState,omitempty"`
+	LastError     string          `json:"lastError,omitempty"`
 	Version       string          `json:"version,omitempty"`
 	BuildID       string          `json:"buildID,omitempty"`
 	PID           int             `json:"pid,omitempty"`
@@ -276,6 +280,7 @@ func GetRemoteStatus(cfg *config.Config) RemoteStatus {
 	st.AccountID = resp.AccountID
 	st.LoggedIn = resp.LoggedIn
 	st.Plan, st.PlanExpiresAt, st.UsedBytes, st.QuotaBytes = resp.Plan, resp.PlanExpiresAt, resp.UsedBytes, resp.QuotaBytes
+	st.BrokerState, st.LastError = resp.BrokerState, resp.LastError
 	if list, err := remoteCall(dir, "pending", 5*time.Second); err == nil {
 		st.Pending = list.Pending
 		for i := range st.Pending {

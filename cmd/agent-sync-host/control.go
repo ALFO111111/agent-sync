@@ -53,6 +53,8 @@ type ctlResponse struct {
 	PlanExpiresAt int64                 `json:"planExpiresAt,omitempty"`
 	UsedBytes     int64                 `json:"usedBytes,omitempty"`
 	QuotaBytes    int64                 `json:"quotaBytes,omitempty"`
+	BrokerState   string                `json:"brokerState,omitempty"`
+	LastError     string                `json:"lastError,omitempty"`
 	Version       string                `json:"version,omitempty"`
 	BuildID       string                `json:"buildID,omitempty"`
 	PID           int                   `json:"pid,omitempty"`
@@ -221,6 +223,7 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 	case "status":
 		st := d.auth.State()
 		resp := ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Broker: d.broker, Mode: d.mode, AccountID: st.AccountID, LoggedIn: st.AccountID != "" && st.RefreshToken != "", Version: version, BuildID: buildID, PID: os.Getpid()}
+		resp.BrokerState, resp.LastError = d.brokerInfo()
 		if d.host != nil && d.host.Auth != nil && resp.LoggedIn {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			plan, exp, used, quota, err := d.host.Auth.AccountUsage(ctx)
