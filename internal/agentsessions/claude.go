@@ -56,6 +56,9 @@ func NewManager(cfg Config) *Manager {
 
 // Start 在 cwd 启动一个新会话，或续聊 resumeID。
 func (m *Manager) Start(cwd, resumeID, mode string) (*Runner, error) {
+	if err := checkResumeID(resumeID); err != nil {
+		return nil, err
+	}
 	if !filepath.IsAbs(cwd) {
 		return nil, errors.New("cwd must be absolute")
 	}
@@ -99,13 +102,9 @@ func (m *Manager) Start(cwd, resumeID, mode string) (*Runner, error) {
 	if resumeID != "" {
 		args = append(args, "--resume", resumeID)
 	}
-	var cmd *exec.Cmd
-	lower := strings.ToLower(bin)
-	if runtime.GOOS == "windows" && (strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat")) {
-		// Go 不能直接执行 .cmd/.bat，必须交给 cmd.exe。
-		cmd = exec.Command("cmd.exe", append([]string{"/c", bin}, args...)...)
-	} else {
-		cmd = exec.Command(bin, args...)
+	cmd, err := agentCommand(bin, args)
+	if err != nil {
+		return nil, err
 	}
 	cmd.Dir = cwd
 	configureProcess(cmd)

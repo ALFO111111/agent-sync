@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -63,6 +62,9 @@ func codexSandbox(mode string) string {
 
 // Start 创建一个 Codex 会话；resumeID 非空时后续轮次会 resume 该 thread。
 func (m *CodexManager) Start(cwd, resumeID, mode string) (*CodexRunner, error) {
+	if err := checkResumeID(resumeID); err != nil {
+		return nil, err
+	}
 	if !filepath.IsAbs(cwd) {
 		return nil, errors.New("cwd must be absolute")
 	}
@@ -185,12 +187,12 @@ func (r *CodexRunner) Send(text string) error {
 		r.mu.Unlock()
 		return errors.New("codex cli not found")
 	}
-	var cmd *exec.Cmd
-	lower := strings.ToLower(bin)
-	if runtime.GOOS == "windows" && (strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat")) {
-		cmd = exec.Command("cmd.exe", append([]string{"/c", bin}, args...)...)
-	} else {
-		cmd = exec.Command(bin, args...)
+	cmd, err := agentCommand(bin, args)
+	if err != nil {
+		r.mu.Lock()
+		r.busy = false
+		r.mu.Unlock()
+		return err
 	}
 	cmd.Dir = r.cwd
 	configureProcess(cmd)
