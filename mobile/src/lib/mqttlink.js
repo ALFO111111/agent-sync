@@ -120,6 +120,12 @@ export class MQTTLink {
       this.onSessionEvent(msg)
       return
     }
+    // 没有 id 的错误不属于任何请求：放进独立错误通道，避免污染通用队列。
+    if ((msg.type === 'error' || msg.type === 'session.error') && !msg.id) {
+      this.lastError = msg
+      if (this.onError) this.onError(msg)
+      return
+    }
     const index = msg.type === 'pong'
       ? this.waiters.findIndex(w => w.pred ? w.pred(msg) : false)
       : this.waiters.findIndex(w => !w.pred || w.pred(msg))

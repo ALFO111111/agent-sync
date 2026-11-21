@@ -527,6 +527,7 @@ func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, 
 
 	case "turn.send":
 		if h.Sessions == nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "sessions unsupported"})
 			return
 		}
 		if len(env.Attachments) > MaxAttachments {
@@ -545,23 +546,31 @@ func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, 
 		}
 		if err := h.Sessions.Send(env.SessionKey, env.Text, atts); err != nil {
 			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
+			return
 		}
+		_ = send(Envelope{Type: "turn.ack", ID: env.ID, SessionKey: env.SessionKey})
 
 	case "turn.stop":
 		if h.Sessions == nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "sessions unsupported"})
 			return
 		}
 		if err := h.Sessions.Stop(env.SessionKey); err != nil {
 			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
+			return
 		}
+		_ = send(Envelope{Type: "turn.ack", ID: env.ID, SessionKey: env.SessionKey})
 
 	case "approval.decide":
 		if h.Sessions == nil {
+			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: "sessions unsupported"})
 			return
 		}
 		if err := h.Sessions.Decide(env.SessionKey, env.ApprovalID, env.Allow); err != nil {
 			_ = send(Envelope{Type: "session.error", ID: env.ID, SessionKey: env.SessionKey, Error: err.Error()})
+			return
 		}
+		_ = send(Envelope{Type: "approval.ack", ID: env.ID, SessionKey: env.SessionKey})
 
 	case "session.setmode":
 		if h.Sessions == nil {

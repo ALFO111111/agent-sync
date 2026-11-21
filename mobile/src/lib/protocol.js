@@ -193,7 +193,7 @@ export class Session {
     const id = Math.random().toString(16).slice(2, 12)
     this.link.send({ v: 1, type: 'session.active', id })
     const reply = await this.link.until(
-      m => (m.type === 'session.active' && m.id === id) || m.type === 'session.error',
+      m => m.id === id && (m.type === 'session.active' || m.type === 'session.error'),
       10000,
     )
     if (reply.type !== 'session.active') throw new Error(reply.error || 'active sessions failed')
@@ -203,7 +203,7 @@ export class Session {
   async projects(tool = 'claude') {
     const id = Math.random().toString(16).slice(2, 12)
     this.link.send({ v: 1, type: 'session.projects', id, tool })
-    const reply = await this.link.until(m => m.type === 'session.projects' || m.type === 'session.error', 15000)
+    const reply = await this.link.until(m => m.id === id && (m.type === 'session.projects' || m.type === 'session.error'), 15000)
     if (reply.type !== 'session.projects') throw new Error(reply.error || 'session.projects failed')
     return reply.projects || []
   }
@@ -211,7 +211,7 @@ export class Session {
   async sessions(tool = 'claude', cwd = '') {
     const id = Math.random().toString(16).slice(2, 12)
     this.link.send({ v: 1, type: 'session.list', id, tool, cwd })
-    const reply = await this.link.until(m => m.type === 'session.list' || m.type === 'session.error', 15000)
+    const reply = await this.link.until(m => m.id === id && (m.type === 'session.list' || m.type === 'session.error'), 15000)
     if (reply.type !== 'session.list') throw new Error(reply.error || 'session.list failed')
     return reply.sessions || []
   }
@@ -219,7 +219,7 @@ export class Session {
   async startSession(tool = 'claude', cwd, resumeId = '', mode = 'readonly') {
     const id = Math.random().toString(16).slice(2, 12)
     this.link.send({ v: 1, type: 'session.start', id, tool, cwd, resumeId, mode })
-    const reply = await this.link.until(m => m.type === 'session.ready' || m.type === 'session.error', 20000)
+    const reply = await this.link.until(m => m.id === id && (m.type === 'session.ready' || m.type === 'session.error'), 20000)
     if (reply.type !== 'session.ready' || !reply.sessionKey) {
       throw new Error(reply.error || 'session.start failed')
     }
@@ -231,7 +231,7 @@ export class Session {
     const id = Math.random().toString(16).slice(2, 12)
     this.link.send({ v: 1, type: 'session.setmode', id, sessionKey, mode })
     const reply = await this.link.until(
-      m => (m.type === 'session.ready' && m.id === id) || m.type === 'session.error',
+      m => m.id === id && (m.type === 'session.ready' || m.type === 'session.error'),
       15000,
     )
     if (reply.type !== 'session.ready' || !reply.sessionKey) {
@@ -254,7 +254,7 @@ export class Session {
     }
     this.link.send({ v: 1, type: 'session.subscribe', id, sessionKey, sinceSeq })
     if (!chunked) {
-      const reply = await this.link.until(m => m.type === 'session.events' || m.type === 'session.error', 15000)
+      const reply = await this.link.until(m => m.id === id && (m.type === 'session.events' || m.type === 'session.error'), 15000)
       if (reply.type !== 'session.events') throw new Error(reply.error || 'subscribe failed')
       loading = false
       for (const ev of reply.events || []) deliver(ev)
@@ -311,17 +311,35 @@ export class Session {
     return begin.attachId
   }
 
-  sendTurn(sessionKey, text, attachments = []) {
-    return this.link.send({ v: 1, type: 'turn.send', sessionKey, text, attachments })
+  async sendTurn(sessionKey, text, attachments = []) {
+    const id = Math.random().toString(16).slice(2, 12)
+    await this.link.send({ v: 1, type: 'turn.send', id, sessionKey, text, attachments })
+    const reply = await this.link.until(
+      m => m.id === id && (m.type === 'turn.ack' || m.type === 'session.error'),
+      20000,
+    )
+    if (reply.type !== 'turn.ack') throw new Error(reply.error || '消息发送失败')
   }
 
-  stopTurn(sessionKey) {
-    return this.link.send({ v: 1, type: 'turn.stop', sessionKey })
+  async stopTurn(sessionKey) {
+    const id = Math.random().toString(16).slice(2, 12)
+    await this.link.send({ v: 1, type: 'turn.stop', id, sessionKey })
+    const reply = await this.link.until(
+      m => m.id === id && (m.type === 'turn.ack' || m.type === 'session.error'),
+      15000,
+    )
+    if (reply.type !== 'turn.ack') throw new Error(reply.error || '停止失败')
   }
 
   // 回应一次工具审批。
-  decide(sessionKey, approvalId, allow) {
-    return this.link.send({ v: 1, type: 'approval.decide', sessionKey, approvalId, allow })
+  async decide(sessionKey, approvalId, allow) {
+    const id = Math.random().toString(16).slice(2, 12)
+    await this.link.send({ v: 1, type: 'approval.decide', id, sessionKey, approvalId, allow })
+    const reply = await this.link.until(
+      m => m.id === id && (m.type === 'approval.ack' || m.type === 'session.error'),
+      15000,
+    )
+    if (reply.type !== 'approval.ack') throw new Error(reply.error || '审批发送失败')
   }
 
   // 结束整个会话进程，立即释放电脑上的会话文件。
