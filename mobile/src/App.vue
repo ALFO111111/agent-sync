@@ -758,8 +758,9 @@ async function loadHistory(older = false) {
 }
 
 async function startChat(cwd, resumeId) {
-  // 开新会话前先结束上一个，避免占用电脑上的会话名额。
+  // 开新会话前先确认；用户取消就不要悄悄结束正在跑的任务。
   if (session && sessionKey.value) {
+    if (!window.confirm('当前会话还在运行，结束它再开新会话？')) return false
     try {
       await session.closeSession(sessionKey.value)
     } catch {
@@ -782,13 +783,17 @@ async function startChat(cwd, resumeId) {
     void loadHistory()
   }
   await session.subscribe(key, 0, onSessionEvent)
+  return true
 }
 
 function newSession() {
   run(async () => {
     if (!currentProject.value) throw new Error('先选一个项目')
     currentSession.value = { title: '新会话' }
-    await startChat(currentProject.value.cwd, '')
+    if (!(await startChat(currentProject.value.cwd, ''))) {
+      currentSession.value = null
+      return
+    }
     log('已新建会话')
   })
 }
@@ -796,7 +801,10 @@ function newSession() {
 function resumeSession(s) {
   run(async () => {
     currentSession.value = s
-    await startChat(s.cwd, s.id)
+    if (!(await startChat(s.cwd, s.id))) {
+      currentSession.value = null
+      return
+    }
     log('已继续会话')
   })
 }
@@ -1041,9 +1049,16 @@ function stopChat() {
   }
 }
 
-// 返回 = 离开会话并结束电脑上的进程（对话历史仍保留，可再“继续”）。
-function closeChat() {
-  resetHistory()
+// 返回 = 只离开页面，电脑上的任务继续跑；订阅保留，回来还能接着看。
+function leaveChat() {
+  chatOpen.value = false
+  sessionView.value = 'project'
+  if (currentProject.value) reloadSessions()
+}
+
+// 结束会话 = 真正停止电脑上的进程；必须二次确认。
+function endChat() {
+  if (!window.confirm('结束会话会停止电脑上的任务，确定吗？')) return
   run(async () => {
     if (session && sessionKey.value) {
       try {
@@ -1055,6 +1070,7 @@ function closeChat() {
     }
     sessionKey.value = ''
     chatOpen.value = false
+    resetHistory()
     for (const a of attachments.value) revokePreview(a)
     attachments.value = []
     generating.value = false
@@ -1065,11 +1081,6 @@ function closeChat() {
     sessionView.value = 'project'
     if (currentProject.value) reloadSessions()
   })
-}
-
-// 结束会话 = 返回上一级；电脑上的进程会立即释放，历史仍在。
-function endChat() {
-  closeChat()
 }
 
 onMounted(async () => {
@@ -1110,7 +1121,7 @@ onMounted(async () => {
         if (showPlus.value) { showPlus.value = false; return }
         if (showPerm.value) { showPerm.value = false; return }
         if (filesOpen.value) { closeFiles(); return }
-        if (chatOpen.value) { closeChat(); return }
+        if (chatOpen.value) { leaveChat(); return }
         if (tab.value === 'sessions' && sessionView.value === 'project') { backToProjects(); return }
         CapApp.exitApp()
       })
@@ -1532,6 +1543,10 @@ async function pickGallery() {
         <span class="conn-state" :data-state="state"><i></i>{{ statusLabel }}</span>
       </header>
 
+      <button v-if="!chatOpen && sessionKey" class="reconnect-bar" @click="chatOpen = true">
+        <Icon name="chat" :size="14" /> 回到运行中的会话
+      </button>
+
       <!-- 首页 -->
       <section v-if="!chatOpen && tab === 'home'" class="page">
         <div class="hero-card">
@@ -1662,8 +1677,9 @@ async function pickGallery() {
     <!-- 聊天：全屏，参考 DeepSeek 的对话页 -->
     <section v-if="chatOpen && !filesOpen" class="chat-page">
       <header class="chat-head">
-        <button class="icon-btn" @click="closeChat"><Icon name="back" /></button>
+        <button class="icon-btn" aria-label="返回，任务继续运行" @click="leaveChat"><Icon name="back" /></button>
         <div class="chat-title">{{ chatTitle }}</div>
+        <button class="icon-btn" aria-label="结束会话" :disabled="!sessionKey" @click="endChat"><Icon name="stop" /></button>
         <button class="icon-btn" :disabled="!currentProject" @click="openChatFiles"><Icon name="folder" /></button>
       </header>
       <div class="chat-subbar">
