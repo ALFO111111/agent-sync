@@ -72,6 +72,9 @@ func (fakeRegistrar) PairToken(context.Context, string) (string, string, error) 
 func (fakeRegistrar) MQTTCredentials(context.Context, string) (string, string, error) {
 	return "mqtt-user", "mqtt-pass", nil
 }
+func (fakeRegistrar) DeviceCredentials(context.Context, string, string) (string, string, error) {
+	return "device-user", "device-pass", nil
+}
 
 func TestInviteCarriesPairCredentials(t *testing.T) {
 	store, err := newFileStore(t.TempDir())

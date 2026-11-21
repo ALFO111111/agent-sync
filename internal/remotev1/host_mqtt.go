@@ -231,7 +231,7 @@ func (h *Host) readyWithCredentials(ctx context.Context, deviceID string) Envelo
 	env := h.readyEnvelope(deviceID)
 	if h.Auth != nil {
 		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		user, pass, err := h.Auth.MQTTCredentials(cctx, env.HostID)
+		user, pass, err := h.Auth.DeviceCredentials(cctx, env.HostID, deviceID)
 		cancel()
 		if err == nil {
 			env.MQTTUser, env.MQTTPassword = user, pass

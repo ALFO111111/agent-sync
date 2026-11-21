@@ -14,8 +14,11 @@ type DeviceRegistrar interface {
 	RegisterDevice(ctx context.Context, hostID, deviceID, name, publicKey string) error
 	// PairToken 生成只允许读写 pair 主题的短期凭据，供二维码里的手机配对使用。
 	PairToken(ctx context.Context, hostID string) (username, password string, err error)
-	// MQTTCredentials 取本账号的固定 MQTT 用户名密码，配对成功后通过加密通道交给手机。
+	// MQTTCredentials 取本机的 MQTT 凭据（账号+host 绑定的 JWT）。
 	MQTTCredentials(ctx context.Context, hostID string) (username, password string, err error)
+	// DeviceCredentials 取某台已登记手机的 MQTT 凭据（账号+手机绑定的 JWT），
+	// 配对成功后通过加密通道交给手机。
+	DeviceCredentials(ctx context.Context, hostID, deviceID string) (username, password string, err error)
 }
 
 type AuthClient struct {
@@ -83,17 +86,17 @@ func (c *AuthClient) PairToken(ctx context.Context, hostID string) (string, stri
 	return out.Username, out.Password, nil
 }
 
-func (c *AuthClient) MQTTCredentials(ctx context.Context, hostID string) (string, string, error) {
+func (c *AuthClient) mqttToken(ctx context.Context, deviceID, hostID, role, scope string) (string, string, error) {
 	var out struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	body := map[string]string{
 		"sessionToken": c.SessionToken,
-		"deviceId":     hostID,
+		"deviceId":     deviceID,
 		"hostId":       hostID,
-		"role":         "host",
-		"scope":        "session",
+		"role":         role,
+		"scope":        scope,
 	}
 	if err := c.postInto(ctx, "/v1/mqtt/token", body, &out); err != nil {
 		return "", "", err
@@ -102,4 +105,12 @@ func (c *AuthClient) MQTTCredentials(ctx context.Context, hostID string) (string
 		return "", "", fmt.Errorf("auth service: empty mqtt credentials")
 	}
 	return out.Username, out.Password, nil
+}
+
+func (c *AuthClient) MQTTCredentials(ctx context.Context, hostID string) (string, string, error) {
+	return c.mqttToken(ctx, hostID, hostID, "host", "session")
+}
+
+func (c *AuthClient) DeviceCredentials(ctx context.Context, hostID, deviceID string) (string, string, error) {
+	return c.mqttToken(ctx, deviceID, hostID, "phone", "session")
 }
