@@ -44,15 +44,15 @@ func payload(m manifest) []byte {
 }
 
 func main() {
-	genkey := flag.String("genkey", "", "生成新的私钥文件（base64 的 32 字节 seed）并打印公钥")
-	version := flag.String("version", "", "版本号，例如 0.7.1")
-	platform := flag.String("platform", runtime.GOOS+"/"+runtime.GOARCH, "平台，例如 windows/amd64")
-	file := flag.String("file", "", "安装包路径")
-	url := flag.String("url", "", "安装包下载地址（https）")
-	name := flag.String("name", "", "手机/客户端看到的文件名（默认取文件名）")
-	notes := flag.String("notes", "", "更新说明")
-	keyPath := flag.String("key", "", "Ed25519 私钥文件（32 字节 seed 的 base64）")
-	out := flag.String("out", "latest.json", "输出路径")
+	genkey := flag.String("genkey", "", "generate a new private key (base64 32-byte seed) and print the public key")
+	version := flag.String("version", "", "version, e.g. 0.7.1")
+	platform := flag.String("platform", runtime.GOOS+"/"+runtime.GOARCH, "platform, e.g. windows/amd64")
+	file := flag.String("file", "", "installer file path")
+	url := flag.String("url", "", "installer download URL (https)")
+	name := flag.String("name", "", "file name seen by clients (defaults to the file base name)")
+	notes := flag.String("notes", "", "release notes")
+	keyPath := flag.String("key", "", "Ed25519 private key file (base64 of a 32-byte seed)")
+	out := flag.String("out", "latest.json", "output path")
 	flag.Parse()
 
 	if *genkey != "" {
@@ -68,11 +68,11 @@ func main() {
 		}
 		pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
 		fmt.Println("private key:", *genkey)
-		fmt.Println("public key (填到 internal/update/manifest.go):", base64.StdEncoding.EncodeToString(pub))
+		fmt.Println("public key (paste into internal/update/manifest.go):", base64.StdEncoding.EncodeToString(pub))
 		return
 	}
 	if *version == "" || *file == "" || *url == "" || *keyPath == "" {
-		fail(fmt.Errorf("需要 -version -file -url -key"))
+		fail(fmt.Errorf("required: -version -file -url -key"))
 	}
 	raw, err := os.ReadFile(*file)
 	if err != nil {
@@ -96,7 +96,7 @@ func main() {
 	}
 	seed, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(keyB64)))
 	if err != nil || len(seed) != ed25519.SeedSize {
-		fail(fmt.Errorf("私钥必须是 32 字节 seed 的 base64"))
+		fail(fmt.Errorf("private key must be base64 of a 32-byte seed"))
 	}
 	m.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(ed25519.NewKeyFromSeed(seed), payload(m)))
 	data, err := json.MarshalIndent(m, "", "  ")
