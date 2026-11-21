@@ -27,6 +27,7 @@ import { login as authLogin, mqttToken, passwordValid, usernameValid } from './l
 import { hostKey, pickActive, upsertPairing } from './lib/pairings.js'
 
 const state = ref('idle')
+const hostOnline = ref(true)
 const message = ref('')
 const logs = ref([])
 const toast = ref('')
@@ -201,7 +202,18 @@ onUnmounted(() => {
   updateChecker?.dispose()
   updateForegroundListener?.remove()
 })
-const connected = computed(() => state.value === 'connected' && session)
+const connected = computed(() => state.value === 'connected' && session && hostOnline.value)
+
+function handleHostStatus(online) {
+  hostOnline.value = online
+  if (!online) {
+    state.value = 'error'
+    message.value = '电脑离线，等待恢复…'
+  } else if (session) {
+    state.value = 'connected'
+    message.value = '已连接'
+  }
+}
 
 function log(line) {
   const t = new Date().toLocaleTimeString()
@@ -372,7 +384,7 @@ async function doPair(invitation) {
   message.value = '正在连接 Broker…'
   const did = fingerprint(device.value.publicKey)
   const creds = await credentialsFor(invitation.hostId, did, 'pair', { invitation })
-  session = await pair(invitation, device.value, deviceName.value, onPending, creds, handleLinkClose)
+  session = await pair(invitation, device.value, deviceName.value, onPending, creds, handleLinkClose, handleHostStatus)
   ready.value = session.ready
   const entry = {
     hostId: invitation.hostId || session.ready.hostId || '',
@@ -415,7 +427,7 @@ async function doReconnect() {
   message.value = '正在重连…'
   const did = pairing.value.deviceId || fingerprint(device.value.publicKey)
   const creds = await credentialsFor(pairing.value.hostId, did, 'session', { saved: pairing.value })
-  session = await reconnect(pairing.value, device.value, onPending, creds, handleLinkClose)
+  session = await reconnect(pairing.value, device.value, onPending, creds, handleLinkClose, handleHostStatus)
   ready.value = session.ready
   pairing.value.pairKey = session.pairKey
   pairing.value.deviceKey = session.deviceKey || ''
@@ -485,7 +497,7 @@ async function autoReconnect() {
       try {
         const did = pairing.value.deviceId || fingerprint(device.value.publicKey)
         const creds = await credentialsFor(pairing.value.hostId, did, 'session', { saved: pairing.value })
-        session = await reconnect(pairing.value, device.value, onPending, creds, handleLinkClose)
+        session = await reconnect(pairing.value, device.value, onPending, creds, handleLinkClose, handleHostStatus)
         ready.value = session.ready
         pairing.value.pairKey = session.pairKey
         pairing.value.deviceKey = session.deviceKey || ''

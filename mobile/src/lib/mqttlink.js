@@ -1,6 +1,7 @@
 // MQTT 传输层：主题、单条消息加密、连接与请求/响应队列。
 import mqtt from 'mqtt'
 import { seal, open, parseKey } from './e2ee.js'
+import { isStatusTopic, parseHostStatus } from './status.js'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -47,7 +48,7 @@ export async function connectMQTT({ url, username, password, clientId, willTopic
 }
 
 export class MQTTLink {
-  constructor({ client, topics, mode, contentKey, hostID, deviceID, onClose, startSeq }) {
+  constructor({ client, topics, mode, contentKey, hostID, deviceID, onClose, onStatus, startSeq }) {
     this.client = client
     this.topics = topics
     this.mode = mode
@@ -59,8 +60,9 @@ export class MQTTLink {
     this.waiters = []
     this.closed = false
     this.onSessionEvent = null
+    this.onStatus = onStatus || null
     this.onCloseCb = onClose
-    client.on('message', (_topic, payload) => this.onMessage(payload))
+    client.on('message', (topic, payload) => this.onMessage(topic, payload))
     client.on('error', () => {})
     client.on('close', () => this.failAll(new Error('disconnected')))
   }
@@ -85,8 +87,13 @@ export class MQTTLink {
     await this.client.subscribeAsync([this.topics.evt, this.topics.status, this.topics.pair], { qos: 1 })
   }
 
-  onMessage(payload) {
+  onMessage(topic, payload) {
     if (this.closed) return
+    if (isStatusTopic(topic)) {
+      const online = parseHostStatus(payload)
+      if (online !== null) this.onStatus?.(online)
+      return
+    }
     let frame
     try {
       frame = JSON.parse(dec.decode(payload))
