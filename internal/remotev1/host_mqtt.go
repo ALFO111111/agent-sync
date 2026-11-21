@@ -237,7 +237,10 @@ func (h *Host) readyWithCredentials(ctx context.Context, deviceID string) Envelo
 		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		user, pass, err := h.Auth.DeviceCredentials(cctx, env.HostID, deviceID)
 		cancel()
-		if err == nil {
+		if err != nil {
+			h.Logf("device credentials: %v", err)
+			env.Type, env.Error = "denied", "credentials"
+		} else {
 			env.MQTTUser, env.MQTTPassword = user, pass
 		}
 	}
@@ -322,7 +325,7 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 				return
 			}
 			st.device = device
-			_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), h.readyWithCredentials(ctx, device.ID), 1)
+			_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), h.readyWithCredentials(ctx, did), 1)
 			return
 		}
 		p, err := h.Authority.BeginPair(st.inviteID, st.inviteSecret, st.pub, st.name, env.DeviceKey)
@@ -343,7 +346,7 @@ func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, di
 							return
 						}
 						st.device = d
-						_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), h.readyWithCredentials(ctx, d.ID), 1)
+						_ = h.replyPair(tr, dts.Pair(), h.nextSeq(did), h.readyWithCredentials(ctx, did), 1)
 						return
 					}
 				}

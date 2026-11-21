@@ -335,7 +335,10 @@ async function handshake(link, device, name, invitation, onPending, deviceKey) {
     signature,
   })
   const first = await link.next(20000)
-  if (first.type === 'ready') return { ready: first, useDeviceKey }
+  if (first.type === 'ready') {
+    if (!first.mqttUser || !first.mqttPassword) throw new Error('电脑未下发设备凭据，请重新扫码配对')
+    return { ready: first, useDeviceKey }
+  }
   if (first.type === 'denied') throw new Error('denied')
   if (first.type === 'pending') {
     onPending?.(first.id)

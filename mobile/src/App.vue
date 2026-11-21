@@ -356,7 +356,7 @@ async function credentialsFor(hostId, did, scope, opts = {}) {
   const saved = opts.saved
   if (saved?.mqttUser && saved?.mqttPassword) {
     // 0.7.0 旧版保存的是账号级固定凭据（用户名不带点）；新版是 <账号>.<设备> 的 JWT。
-    if (!saved.mqttUser.includes('.')) throw new Error('配对凭据已升级，请重新扫码配对')
+    if (!saved.mqttUser.includes('.') || saved.mqttUser.startsWith('p.')) throw new Error('配对凭据已升级，请重新扫码配对')
     return { url: saved.broker || conn.value.url || 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: saved.mqttUser, password: saved.mqttPassword }
   }
   if (scope === 'pair' && opts.invitation?.mqttUser && opts.invitation?.mqttPassword) {
@@ -396,8 +396,8 @@ async function doPair(invitation) {
     pairKey: session.pairKey,
     deviceKey: session.deviceKey || '',
     seq: session.link.seq,
-    mqttUser: session.ready.mqttUser || invitation.mqttUser || '',
-    mqttPassword: session.ready.mqttPassword || invitation.mqttPassword || '',
+    mqttUser: session.ready.mqttUser || '',
+    mqttPassword: session.ready.mqttPassword || '',
   }
   pairings.value = upsertPairing(pairings.value, entry)
   pairing.value = entry
