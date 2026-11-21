@@ -280,6 +280,11 @@ func (a *Authority) Invite(hostName string) (Invitation, error) {
 func (a *Authority) RotateContentKey() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.rotateContentKeyLocked()
+}
+
+// rotateContentKeyLocked 与 RotateContentKey 相同，但调用方必须已持有 a.mu。
+func (a *Authority) rotateContentKeyLocked() error {
 	key, err := NewContentKey()
 	if err != nil {
 		return err
@@ -528,6 +533,8 @@ func (a *Authority) Revoke(ref string) (Device, error) {
 				d.ContentKey = oldKey
 				return Device{}, err
 			}
+			// 撤销后换掉共用配对密钥，旧手机不能再拿它发 pair 握手。
+			_ = a.rotateContentKeyLocked()
 			return *d, nil
 		}
 	}
@@ -548,6 +555,8 @@ func (a *Authority) RemoveDevice(ref string) (Device, error) {
 				a.state.Devices[idx] = d
 				return Device{}, err
 			}
+			// 删除设备后轮换共用配对密钥；其他设备用各自的 ContentKey，不受影响。
+			_ = a.rotateContentKeyLocked()
 			return d, nil
 		}
 	}

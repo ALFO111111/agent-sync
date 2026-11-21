@@ -175,6 +175,10 @@ func (h *Host) onMessage(ctx context.Context, tr Transport, ts TopicSet, topic s
 	if json.Unmarshal(plain, &env) != nil {
 		return
 	}
+	// pair 主题只承载握手；业务类型必须走 req/up，防止共用配对密钥跨设备注入。
+	if kind == "pair" && env.Type != "hello" && env.Type != "proof" {
+		return
+	}
 	// 已经有独立密钥的设备，业务消息必须用独立密钥；全局密钥只允许握手。
 	if usedGlobal && env.Type != "hello" && env.Type != "proof" {
 		if d, ok := h.Authority.DeviceByRef(did); ok && d.ContentKey != "" {
@@ -241,6 +245,12 @@ func (h *Host) readyWithCredentials(ctx context.Context, deviceID string) Envelo
 }
 
 func (h *Host) handleEnvelope(ctx context.Context, tr Transport, ts TopicSet, did, kind string, env Envelope) {
+	if kind == "pair" && env.Type != "hello" && env.Type != "proof" {
+		return
+	}
+	if kind != "pair" && (env.Type == "hello" || env.Type == "proof") {
+		return
+	}
 	hostID := h.Authority.State().HostID
 	dts := ts
 	dts.DID = did

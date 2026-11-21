@@ -113,6 +113,15 @@ func TestHostDispatchDeviceList(t *testing.T) {
 	if reply.Type != "devices" {
 		t.Fatalf("want devices, got %s", reply.Type)
 	}
+
+	// 业务帧走 pair 主题必须被忽略，否则共用配对密钥可以跨设备注入。
+	f, _ = SealFrame(key, ClientToHost, "d1", 4, mustJSON(t, Envelope{Type: "device.list", ID: "q2"}))
+	tr.inject("u/u1/h/h1/pair/d1", mustJSON(t, f))
+	select {
+	case msg := <-tr.sent:
+		t.Fatalf("pair topic business frame got a reply on %s", msg.topic)
+	case <-time.After(200 * time.Millisecond):
+	}
 }
 
 func TestForgedFrameDoesNotAdvanceReplayWindow(t *testing.T) {
@@ -251,8 +260,8 @@ func TestRemovingOneDeviceKeepsOtherDevice(t *testing.T) {
 	if _, ok := h.devices["fp2"]; !ok {
 		t.Fatal("other device state was dropped")
 	}
-	if auth.State().ContentKey != global.Base64() {
-		t.Fatal("global pairing key must not rotate")
+	if auth.State().ContentKey == global.Base64() {
+		t.Fatal("global pairing key should rotate after removing a device")
 	}
 	if !auth.IsActive("d2") {
 		t.Fatal("other device should stay active")
@@ -287,12 +296,12 @@ func TestSlowDeviceDoesNotBlockAnotherDevice(t *testing.T) {
 	tr := newFakeTransport()
 	ts := TopicSet{UID: "u1", HID: "h1", DID: "slow"}
 	// 慢设备先发一个会阻塞的请求。
-	h.enqueue(h.devices["slow"], inbound{ctx: context.Background(), tr: tr, ts: ts, did: "slow", kind: "pair",
+	h.enqueue(h.devices["slow"], inbound{ctx: context.Background(), tr: tr, ts: ts, did: "slow", kind: "req",
 		env: Envelope{Type: "session.history", ID: "1", Tool: "claude", Cwd: "/", ClaudeSessionID: "s1"}})
 	<-slow.started
 	// 快设备发 ping，必须在 100ms 内收到回复。
 	start := time.Now()
-	h.enqueue(h.devices["fast"], inbound{ctx: context.Background(), tr: tr, ts: ts, did: "fast", kind: "pair",
+	h.enqueue(h.devices["fast"], inbound{ctx: context.Background(), tr: tr, ts: ts, did: "fast", kind: "req",
 		env: Envelope{Type: "ping", ID: "2"}})
 	select {
 	case <-tr.sent:
