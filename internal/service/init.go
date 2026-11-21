@@ -58,8 +58,8 @@ func Initialize(ctx context.Context, p InitParams) (*InitResult, error) {
 	if p.DeviceName == "" {
 		return nil, errors.New(i18n.T("请填写设备名"))
 	}
-	if p.Passphrase == "" {
-		return nil, errors.New(i18n.T("口令不能为空"))
+	if err := validatePassphrase(p.Passphrase); err != nil {
+		return nil, err
 	}
 	if p.Storage.Type == "" {
 		return nil, errors.New(i18n.T("存储类型不能为空"))

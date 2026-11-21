@@ -23,6 +23,7 @@ func TestRemoteConfigRoundTrip(t *testing.T) {
 		Mode:      "selfhost",
 		Broker:    " wss://relay.example.com/mqtt ",
 		Username:  " user ",
+		Password:  "selfhost-pass-123",
 		Name:      " 我的电脑 ",
 		ClaudeBin: ` D:\tools\claude.cmd `,
 		Proxy:     " http://127.0.0.1:7890 ",
@@ -41,6 +42,11 @@ func TestRemoteConfigRoundTrip(t *testing.T) {
 	}
 	if got.Bin != "" {
 		t.Fatalf("auto path must stay empty: %q", got.Bin)
+	}
+	// 自建密码要落到本机配置；模拟进程重启后仍能取回。
+	setRemotePassword("")
+	if p := getRemotePassword(); p != "selfhost-pass-123" {
+		t.Fatalf("自建密码重启后未恢复: %q", p)
 	}
 	// 没填 Bin：不应写进配置、换机器后不会指向旧路径。
 	if cfg, _ := config.Load(); cfg.RemoteBin != "" {

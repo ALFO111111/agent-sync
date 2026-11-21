@@ -1,11 +1,41 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/ALFO111111/agent-sync/internal/config"
 )
+
+func TestAppStateDirIsDenied(t *testing.T) {
+	home := t.TempDir()
+	state := filepath.Join(home, ".agent-sync", "remote")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "key"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_SYNC_HOME", filepath.Join(t.TempDir(), "cfg"))
+	s := &sessionService{allowed: []string{home}, allowedTime: time.Now(), stateDir: state}
+	if !s.cwdAllowed(home) {
+		t.Fatal("home should stay allowed")
+	}
+	for _, p := range []string{config.Dir(), filepath.Join(config.Dir(), "key"), state, filepath.Join(state, "key")} {
+		if !s.deniedPath(p) {
+			t.Fatalf("%q should be denied", p)
+		}
+	}
+	if _, _, err := s.resolveFile(home, filepath.ToSlash(filepath.Join(".agent-sync", "remote", "key"))); err == nil {
+		t.Fatal("file browser must not read the app key")
+	}
+	if s.cwdAllowed(state) {
+		t.Fatal("cwd inside the state dir must be rejected")
+	}
+}
 
 func TestCwdAllowedPortable(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "project")

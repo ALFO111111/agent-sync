@@ -55,7 +55,7 @@ func mustSync(t *testing.T) {
 
 // 初始化：生成 config + key，云端写入 keycheck。
 func TestInitialize(t *testing.T) {
-	p, _ := testInitParams(t, "口令 带空格")
+	p, _ := testInitParams(t, "口令 带空格 测试用 12")
 	res, err := Initialize(context.Background(), p)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestInitialize(t *testing.T) {
 
 // 第二台设备用同一口令 init：keycheck 验证通过。
 func TestInitializeSamePassphraseMatches(t *testing.T) {
-	p, root := testInitParams(t, "same-pass")
+	p, root := testInitParams(t, "same-pass-12345")
 	if _, err := Initialize(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
@@ -99,12 +99,12 @@ func TestInitializeSamePassphraseMatches(t *testing.T) {
 
 // 口令不一致必须报错（防止污染云端数据）。
 func TestInitializeWrongPassphrase(t *testing.T) {
-	p, root := testInitParams(t, "right-pass")
+	p, root := testInitParams(t, "right-pass-12345")
 	if _, err := Initialize(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AGENT_SYNC_HOME", filepath.Join(root, "ccs-deviceB"))
-	p.Passphrase = "wrong-pass"
+	p.Passphrase = "wrong-pass-12345"
 	_, err := Initialize(context.Background(), p)
 	if err == nil || !strings.Contains(err.Error(), "口令") {
 		t.Errorf("口令不一致应报口令相关错误，得到 %v", err)
@@ -116,7 +116,7 @@ func TestInitializeValidation(t *testing.T) {
 	if _, err := Initialize(context.Background(), p); err == nil {
 		t.Error("空口令应报错")
 	}
-	p.Passphrase = "x"
+	p.Passphrase = "valid-pass-12"
 	p.Storage.Type = "oss" // 缺 bucket/AK/SK
 	if _, err := Initialize(context.Background(), p); err == nil {
 		t.Error("OSS 配置不完整应报错")
@@ -130,7 +130,7 @@ func TestLoadStatus(t *testing.T) {
 	if LoadStatus().Initialized {
 		t.Error("未初始化时 Initialized 应为 false（向导靠它判断）")
 	}
-	p, _ := testInitParams(t, "pass")
+	p, _ := testInitParams(t, "test-pass-12345")
 	if _, err := Initialize(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}

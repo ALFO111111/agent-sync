@@ -11,7 +11,7 @@ import (
 // 设置：Secret 不回传给界面；留空保存 = 沿用原值；存储变了先测连接，连不上不落盘。
 func TestSettingsKeepSecretAndValidate(t *testing.T) {
 	ctx := context.Background()
-	p, root := testInitParams(t, "pass")
+	p, root := testInitParams(t, "test-pass-12345")
 	p.Storage.AccessKeySecret = "sk-secret" // local 存储用不到，只验证读写行为
 	if _, err := Initialize(ctx, p); err != nil {
 		t.Fatal(err)

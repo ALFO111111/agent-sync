@@ -42,9 +42,15 @@ func (s *sessionService) resolveFile(cwd, rel string) (string, string, error) {
 	if !within(root, target) {
 		return "", "", errors.New("path escapes project")
 	}
+	if s.deniedPath(target) {
+		return "", "", errors.New("path is outside the allowed project")
+	}
 	if resolved, err := filepath.EvalSymlinks(target); err == nil {
 		if !within(root, resolved) {
 			return "", "", errors.New("path escapes project")
+		}
+		if s.deniedPath(resolved) {
+			return "", "", errors.New("path is outside the allowed project")
 		}
 		target = resolved
 	}

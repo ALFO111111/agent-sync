@@ -82,7 +82,7 @@ type RemoteActive struct {
 }
 
 // RemoteConfig 是“手机遥控”的设置项（存在 config.json 里）。
-// Password 只在本次启动时经控制通道传给 host，不写入配置文件。
+// Password 同时保存在本机配置（config.json 权限 0600），重启后自建模式可以自动恢复。
 type RemoteConfig struct {
 	Mode      string `json:"mode"`     // official / selfhost
 	Broker    string `json:"broker"`   // MQTT Broker，例如 wss://agent-sync.example.com/mqtt
@@ -107,8 +107,16 @@ func setRemotePassword(p string) {
 
 func getRemotePassword() string {
 	remoteCredMu.Lock()
-	defer remoteCredMu.Unlock()
-	return remotePass
+	p := remotePass
+	remoteCredMu.Unlock()
+	if p != "" {
+		return p
+	}
+	// 重启后内存里没有密码：从本机配置恢复，让自建模式能自动拉起主机。
+	if cfg, err := config.Load(); err == nil {
+		return cfg.RemotePassword
+	}
+	return ""
 }
 
 // RemoteDir 是主机组件的状态目录（与 agent-sync-host 一致）。
@@ -326,6 +334,7 @@ func SaveRemoteConfig(rc RemoteConfig) error {
 	cfg.RemoteMode = mode
 	cfg.RemoteBroker = broker
 	cfg.RemoteUsername = strings.TrimSpace(rc.Username)
+	cfg.RemotePassword = rc.Password
 	cfg.RemoteName = strings.TrimSpace(rc.Name)
 	cfg.RemoteClaudeBin = strings.TrimSpace(rc.ClaudeBin)
 	cfg.RemoteProxy = strings.TrimSpace(rc.Proxy)

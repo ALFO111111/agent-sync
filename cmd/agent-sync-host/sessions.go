@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ALFO111111/agent-sync/internal/agentsessions"
+	"github.com/ALFO111111/agent-sync/internal/config"
 	"github.com/ALFO111111/agent-sync/internal/remotev1"
 )
 
@@ -28,6 +29,8 @@ type sessionService struct {
 
 	attachMu   sync.Mutex
 	attachDirs map[string][]string // 会话 key → 本轮附件临时目录（会话结束清理）
+
+	stateDir string // 主机状态目录（密钥、MQTT 凭据、控制令牌），文件浏览必须拒绝
 }
 
 func newSessionService(bin string, extraPath []string) (*sessionService, error) {
@@ -96,8 +99,29 @@ func (s *sessionService) cwdAllowed(cwd string) bool {
 		return false
 	}
 	clean := filepath.Clean(cwd)
+	if s.deniedPath(clean) {
+		return false
+	}
 	for _, root := range s.allowedRoots() {
 		if pathWithin(clean, filepath.Clean(root)) {
+			return true
+		}
+	}
+	return false
+}
+
+// deniedPath 拒绝应用自己的状态目录：里面有内容密钥、MQTT 凭据和控制令牌。
+// 即使用户主目录本身在允许范围内，也不能把这些文件读给手机。
+func (s *sessionService) deniedPath(target string) bool {
+	if target == "" {
+		return false
+	}
+	dirs := []string{config.Dir()}
+	if s.stateDir != "" {
+		dirs = append(dirs, s.stateDir)
+	}
+	for _, d := range dirs {
+		if d != "" && pathWithin(filepath.Clean(target), filepath.Clean(d)) {
 			return true
 		}
 	}

@@ -49,6 +49,11 @@
         </i18n-t>
         <div class="form-row"><label>{{ t('wizard.pass') }}</label><input v-model="pass1" type="password" /></div>
         <div class="form-row"><label>{{ t('wizard.pass2') }}</label><input v-model="pass2" type="password" /></div>
+        <div class="pass-tools">
+          <span class="muted small">{{ t('wizard.passHint', { n: PASSPHRASE_MIN }) }}</span>
+          <button type="button" class="ghost sm" @click="useGenerated">{{ t('wizard.generate') }}</button>
+        </div>
+        <div v-if="pass1 && pass1 === pass2 && pass1.length < PASSPHRASE_MIN" class="err">{{ t('wizard.passShort', { n: PASSPHRASE_MIN }) }}</div>
         <div v-if="pass1 && pass2 && pass1 !== pass2" class="err">{{ t('wizard.mismatch') }}</div>
         <p class="muted">{{ t('wizard.finishHint') }}</p>
       </template>
@@ -71,6 +76,7 @@ import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import { languageSetting } from '@/i18n'
 import { PROVIDERS, DEFAULT_STORAGE, applyProvider, storageReady } from '@/utils/storageTypes'
+import { PASSPHRASE_MIN, generatePassphrase } from '@/utils/passphrase'
 import LangSwitch from '@/components/LangSwitch.vue'
 import StorageForm from '@/components/StorageForm.vue'
 
@@ -93,10 +99,16 @@ const canNext = computed(() => {
     case 1: return !!deviceName.value.trim()
     case 2: return !!st.value.provider
     case 3: return storageOK.value
-    case 4: return !!pass1.value && pass1.value === pass2.value
+    case 4: return pass1.value.length >= PASSPHRASE_MIN && pass1.value === pass2.value
   }
   return true
 })
+
+function useGenerated() {
+  const p = generatePassphrase()
+  pass1.value = p
+  pass2.value = p
+}
 
 async function testConn() {
   busy.value = true
@@ -147,4 +159,5 @@ onMounted(async () => {
 <style scoped>
 .welcome { font-size: 18px; }
 .test-ok { margin-left: 10px; }
+.pass-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 10px; }
 </style>

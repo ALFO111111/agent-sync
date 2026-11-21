@@ -44,6 +44,7 @@ type Config struct {
 	RemoteMode      string `json:"remoteMode,omitempty"`      // official / selfhost
 	RemoteBroker    string `json:"remoteBroker,omitempty"`    // MQTT Broker 地址
 	RemoteUsername  string `json:"remoteUsername,omitempty"`  // 自建模式用户名
+	RemotePassword  string `json:"remotePassword,omitempty"`  // 自建模式密码（仅本机，0600 保存）
 	RemoteName      string `json:"remoteName,omitempty"`      // 电脑显示名
 	RemoteClaudeBin string `json:"remoteClaudeBin,omitempty"` // claude 可执行文件（空=自动）
 	RemoteBin       string `json:"remoteBin,omitempty"`       // agent-sync-host 可执行文件（空=自动）

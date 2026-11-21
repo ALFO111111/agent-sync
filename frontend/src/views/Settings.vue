@@ -62,6 +62,11 @@
               <div class="form-row"><label>{{ t('settings.passNew') }}</label><input v-model="pass.new1" type="password" :disabled="rekeying" /></div>
               <div class="form-row"><label>{{ t('settings.passNew2') }}</label><input v-model="pass.new2" type="password" :disabled="rekeying" /></div>
             </div>
+            <div class="pass-tools">
+              <span class="muted small">{{ t('wizard.passHint', { n: PASSPHRASE_MIN }) }}</span>
+              <button type="button" class="ghost sm" :disabled="rekeying" @click="useGeneratedPass">{{ t('wizard.generate') }}</button>
+            </div>
+            <div v-if="pass.new1 && pass.new1 === pass.new2 && pass.new1.length < PASSPHRASE_MIN" class="err small">{{ t('wizard.passShort', { n: PASSPHRASE_MIN }) }}</div>
             <div v-if="pass.new1 && pass.new2 && pass.new1 !== pass.new2" class="err small">{{ t('wizard.mismatch') }}</div>
             <template v-if="rekeying">
               <div class="progress mt"><div :style="{ width: rekeyPct + '%' }"></div></div>
@@ -161,6 +166,7 @@ import { useI18n } from 'vue-i18n'
 import { api, EventsOn, BrowserOpenURL } from '@/api'
 import { useNotice } from '@/composables/useNotice'
 import { BLANK_STORAGE } from '@/utils/storageTypes'
+import { PASSPHRASE_MIN, generatePassphrase } from '@/utils/passphrase'
 import { themeSetting, changeTheme } from '@/utils/theme'
 import { fmtSize, releaseNotes } from '@/utils/format'
 import { upd, hasUpdate, checkUpdate, installUpdate, skipUpdate, setAutoUpdate } from '@/stores/update'
@@ -298,8 +304,14 @@ const passOk = ref(false)
 const rekeying = ref(false)
 const rekey = ref({ done: 0, total: 0 })
 const rekeyPct = computed(() => (rekey.value.total ? Math.round((rekey.value.done / rekey.value.total) * 100) : 0))
-const canChangePass = computed(() => pass.value.old && pass.value.new1 && pass.value.new1 === pass.value.new2)
+const canChangePass = computed(() => pass.value.old && pass.value.new1.length >= PASSPHRASE_MIN && pass.value.new1 === pass.value.new2)
 let offRekey
+
+function useGeneratedPass() {
+  const p = generatePassphrase()
+  pass.value.new1 = p
+  pass.value.new2 = p
+}
 
 function closePass() {
   passOpen.value = false
@@ -347,6 +359,7 @@ onUnmounted(() => offRekey?.())
 .storage { order: 4; }
 .scan { order: 5; }
 .pass { order: 6; }
+.pass-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 10px; }
 .about { order: 7; }
 .about-head { display: flex; align-items: center; gap: 12px; }
 .about-logo { width: 40px; height: 40px; border-radius: 8px; }

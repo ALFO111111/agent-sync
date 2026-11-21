@@ -81,6 +81,7 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 	}
 	var svc *sessionService
 	if sessions, err := newSessionService(claudeBin, extraPath); err == nil {
+		sessions.stateDir = dir
 		svc = sessions
 		host.Sessions = sessions
 		host.Files = sessions
