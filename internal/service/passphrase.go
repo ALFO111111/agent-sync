@@ -16,8 +16,8 @@ const minPassphraseRunes = 12
 
 // commonPassphrases 是最常被撞库的口令；同步口令同时是加密密钥，弱口令等于没加密。
 var commonPassphrases = map[string]bool{
-	"123456789012": true,
-	"1234567890123": true,
+	"123456789012":   true,
+	"1234567890123":  true,
 	"12345678901234": true,
 	"1234567890":     true,
 	"password":       true,
