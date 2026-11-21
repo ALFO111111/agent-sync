@@ -22,6 +22,7 @@ import {
 import { createSeqGate } from './lib/seq.js'
 import { shouldSendOnEnter, shouldStickToBottom, nextStick } from './lib/scroll.js'
 import { ensureNotifyPermission, notify as localNotify } from './lib/notify.js'
+import { startKeepAlive, stopKeepAlive } from './lib/keepalive.js'
 import { secureGet, secureRemove, secureSet, storageIsSecure } from './lib/storage.js'
 import { login as authLogin, mqttToken, passwordValid, usernameValid } from './lib/auth.js'
 import { hostKey, pickActive, upsertPairing } from './lib/pairings.js'
@@ -80,7 +81,7 @@ const attachments = ref([]) // {attachId,name,size,kind}
 const attachBusy = ref(false)
 const attachProgress = ref(0)
 const MAX_ATTACH = 3
-const MAX_ATTACH_BYTES = 10 * 1024 * 1024
+const MAX_ATTACH_BYTES = 5 * 1024 * 1024
 let currentAssistant = null
 let currentThinking = null
 let typeTimer = null
@@ -378,7 +379,6 @@ async function doPair(invitation) {
       conn.value.username = invitation.mqttUser
       conn.value.password = invitation.mqttPassword || ''
     }
-    await saveConn()
   }
   state.value = 'connecting'
   message.value = '正在连接 Broker…'
@@ -402,6 +402,8 @@ async function doPair(invitation) {
   pairings.value = upsertPairing(pairings.value, entry)
   pairing.value = entry
   await savePairingsStore(pairings.value, entry)
+  // 连接验证通过后才把自建 Broker 的设置落盘，避免一次坏邀请覆盖原配置。
+  if (invitation.mode === 'selfhost') await saveConn()
   if (conn.value.mode === 'official') {
     // 配对 token 只能访问 pair 主题；换正式 token 重新连接。
     manualClose = true // 这次关闭是主动的，不要触发自动重连循环
@@ -523,6 +525,7 @@ async function autoReconnect() {
             const hit = list.find(a => a.claudeSessionId === claudeSessionId)
             if (hit) {
               sessionKey.value = hit.key
+              void startKeepAlive()
               const since = await readSeq(hit.key)
               seqGate.reset()
               await session.subscribe(hit.key, since, onSessionEvent)
@@ -531,6 +534,7 @@ async function autoReconnect() {
             } else {
               // 电脑上的进程已经结束：清掉旧 key，避免继续往一个不存在的会话发消息。
               sessionKey.value = ''
+              void stopKeepAlive()
               generating.value = false
               thinking.value = false
               currentThinking = null
@@ -551,6 +555,7 @@ async function autoReconnect() {
         log('重连失败：' + msg)
         if (isAuthFailure(msg)) {
           state.value = 'revoked'
+          void stopKeepAlive()
           message.value = '设备已被撤销或凭据失效，请重新扫码配对'
           return
         }
@@ -616,6 +621,7 @@ async function teardown() {
   }
   if (session) session.close()
   session = null
+  void stopKeepAlive()
   chatOpen.value = false
   sessionKey.value = ''
   overview.value = null
@@ -772,6 +778,7 @@ async function startChat(cwd, resumeId) {
   seqGate.reset()
   claudeSessionId = ''
   sessionKey.value = key
+  void startKeepAlive()
   chat.value = []
   currentAssistant = null
   generating.value = false
@@ -973,6 +980,7 @@ function handleSessionEvent(ev) {
     currentThinking = null
     flushPending()
     generating.value = false
+    void stopKeepAlive()
     pushMsg({ role: 'notice', text: `会话进程退出 ${ev.text || ''}`.trim() })
     return
   }
@@ -1003,6 +1011,8 @@ function removeAttachment(id) {
   const hit = attachments.value.find(a => a.attachId === id)
   revokePreview(hit)
   attachments.value = attachments.value.filter(a => a.attachId !== id)
+  // 已经上传到电脑内存的附件也释放掉，避免占着配额直到会话结束。
+  if (session) session.discard(id)
 }
 
 function onEnter(e) {
@@ -1069,6 +1079,7 @@ function endChat() {
       }
     }
     sessionKey.value = ''
+    void stopKeepAlive()
     chatOpen.value = false
     resetHistory()
     for (const a of attachments.value) revokePreview(a)
@@ -1108,6 +1119,8 @@ onMounted(async () => {
         const inv = parseDeepLink(url)
         if (inv) {
           log('收到扫码邀请')
+          const who = inv.name || inv.hostId || '未命名电脑'
+          if (!window.confirm(`收到「${who}」的配对邀请，确认连接这台电脑？`)) return
           run(() => doPair(inv))
         }
       }
@@ -1366,6 +1379,9 @@ function sessionTime(iso) {
 }
 
 const mdCache = new Map()
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+}
 function renderMd(text) {
   if (!text) return ''
   const hit = mdCache.get(text)
@@ -1374,7 +1390,7 @@ function renderMd(text) {
   try {
     html = DOMPurify.sanitize(marked.parse(text, { breaks: true, gfm: true }))
   } catch {
-    html = text
+    html = escapeHtml(text)
   }
   mdCache.set(text, html)
   if (mdCache.size > 200) mdCache.delete(mdCache.keys().next().value)
@@ -1399,6 +1415,10 @@ function openChatFiles() {
 
 async function addAttachmentData({ name, mediaType, kind, data, preview }) {
   if (!session) return
+  if (data.byteLength > MAX_ATTACH_BYTES) {
+    notify(`单张图片不能超过 ${Math.round(MAX_ATTACH_BYTES / 1024 / 1024)} MB`)
+    return
+  }
   if (attachments.value.length >= MAX_ATTACH) {
     notify(`每条消息最多 ${MAX_ATTACH} 张图片`)
     return

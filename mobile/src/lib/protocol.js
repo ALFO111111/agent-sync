@@ -311,6 +311,11 @@ export class Session {
     return begin.attachId
   }
 
+  // 取消一个已上传但还没发出去的附件，让电脑释放内存。
+  discard(attachId) {
+    this.link.send({ v: 1, type: 'attach.discard', attachId }).catch(() => {})
+  }
+
   async sendTurn(sessionKey, text, attachments = []) {
     const id = Math.random().toString(16).slice(2, 12)
     await this.link.send({ v: 1, type: 'turn.send', id, sessionKey, text, attachments })

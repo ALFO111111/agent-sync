@@ -670,6 +670,13 @@ func (h *Host) dispatchEnvelope(ctx context.Context, tr Transport, ts TopicSet, 
 			_ = send(Envelope{Type: "attach.error", AttachID: env.AttachID, Error: err.Error()})
 		}
 
+	case "attach.discard":
+		h.attachments.Discard(env.AttachID)
+		if st.uploads != nil {
+			delete(st.uploads, env.AttachID)
+		}
+		_ = send(Envelope{Type: "attach.discarded", ID: env.ID, AttachID: env.AttachID})
+
 	case "attach.end":
 		path, err := h.attachments.Commit(env.AttachID)
 		if err != nil {

@@ -14,6 +14,14 @@ test('seal/open roundtrip and sender binding', () => {
   assert.throws(() => open(k, 'h2c', 'dev1', 1, f))
 })
 
+test('rejects replay at or below the last seen sequence', () => {
+  const k = parseKey(ZERO_KEY)
+  const f = seal(k, 'h2c', 'h', 5, enc.encode('x'))
+  assert.equal(dec.decode(open(k, 'h2c', 'h', 5, f, 4)), 'x')
+  assert.throws(() => open(k, 'h2c', 'h', 5, f, 5))
+  assert.throws(() => open(k, 'h2c', 'h', 5, f, 9))
+})
+
 test('rejects oversize and duplicate nonce reuse', () => {
   const k = parseKey(ZERO_KEY)
   assert.throws(() => seal(k, 'c2h', 'd', 1, new Uint8Array(MAX_PLAIN + 1)))

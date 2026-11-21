@@ -41,8 +41,8 @@ export function seal(key, dir, from, seq, plain) {
   return { v: 3, from, seq, nonce: b64(nonce), data: b64(ct) }
 }
 
-export function open(key, dir, from, seq, frame) {
-  if (!key || key.length !== 32 || frame.v !== 3 || frame.from !== from || frame.seq !== seq) {
+export function open(key, dir, from, seq, frame, lastSeq = 0) {
+  if (!key || key.length !== 32 || frame.v !== 3 || frame.from !== from || frame.seq !== seq || !Number.isInteger(seq) || seq <= lastSeq) {
     throw new Error('frame rejected')
   }
   const nonce = unb64(frame.nonce)

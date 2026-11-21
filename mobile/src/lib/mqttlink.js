@@ -62,6 +62,8 @@ export class MQTTLink {
     this.onSessionEvent = null
     this.onStatus = onStatus || null
     this.onCloseCb = onClose
+    // 每个发送方（主机）的连接内递增序号，重复/倒退的帧直接丢弃。
+    this.lastSeqBySender = new Map()
     client.on('message', (topic, payload) => this.onMessage(topic, payload))
     client.on('error', () => {})
     client.on('close', () => this.failAll(new Error('disconnected')))
@@ -102,7 +104,9 @@ export class MQTTLink {
     }
     let msg
     try {
-      msg = JSON.parse(dec.decode(open(this.key, 'h2c', this.hostID, frame.seq, frame)))
+      const last = this.lastSeqBySender.get(frame.from) || 0
+      msg = JSON.parse(dec.decode(open(this.key, 'h2c', this.hostID, frame.seq, frame, last)))
+      this.lastSeqBySender.set(frame.from, frame.seq)
     } catch {
       return
     }

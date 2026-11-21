@@ -91,6 +91,13 @@ func (s *attachmentStore) Write(id string, seq int, data []byte) error {
 	return nil
 }
 
+// Discard 丢弃一个还没 Commit 的上传（手机删除缩略图时调用）。
+func (s *attachmentStore) Discard(id string) {
+	s.mu.Lock()
+	delete(s.items, id)
+	s.mu.Unlock()
+}
+
 func (s *attachmentStore) Commit(id string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

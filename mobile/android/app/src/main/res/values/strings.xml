@@ -4,4 +4,8 @@
     <string name="title_activity_main">Agent Sync</string>
     <string name="package_name">com.alfo.agentsync</string>
     <string name="custom_url_scheme">com.alfo.agentsync</string>
+    <string name="keepalive_channel">会话连接</string>
+    <string name="keepalive_channel_desc">有会话运行时保持与电脑的连接</string>
+    <string name="keepalive_title">agent-sync 正在保持连接</string>
+    <string name="keepalive_text">任务在电脑上继续运行，退出 App 不会停止</string>
 </resources>
