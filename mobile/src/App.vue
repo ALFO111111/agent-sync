@@ -20,7 +20,7 @@ import {
   reconnect,
 } from './lib/protocol.js'
 import { createSeqGate } from './lib/seq.js'
-import { shouldSendOnEnter, shouldStickToBottom } from './lib/scroll.js'
+import { shouldSendOnEnter, shouldStickToBottom, nextStick } from './lib/scroll.js'
 import { ensureNotifyPermission, notify as localNotify } from './lib/notify.js'
 import { secureGet, secureRemove, secureSet, storageIsSecure } from './lib/storage.js'
 import { login as authLogin, mqttToken, passwordValid, usernameValid } from './lib/auth.js'
@@ -106,6 +106,8 @@ const overviewErr = ref("")
 const theme = ref((() => { try { return localStorage.getItem('ags:theme') || 'system' } catch { return 'system' } })())
 const msgBox = ref(null)
 const stickToBottom = ref(true)
+let programmaticScroll = false
+let userScrollUntil = 0
 const filesOpen = ref(false)
 const fsCwd = ref("")
 const fsPath = ref("")
@@ -1223,13 +1225,26 @@ function closeFiles() {
 async function scrollChat(force = false) {
   await nextTick()
   const el = msgBox.value
-  if (el && (force || stickToBottom.value)) el.scrollTop = el.scrollHeight
+  if (!el || (!force && !stickToBottom.value)) return
+  // 程序化滚动会触发 scroll 事件；不屏蔽的话，内容突然变长时会被误判成“用户上滑”。
+  programmaticScroll = true
+  el.scrollTop = el.scrollHeight
+  requestAnimationFrame(() => { programmaticScroll = false })
+}
+
+function noteUserScroll() {
+  userScrollUntil = Date.now() + 800
 }
 
 function onChatScroll() {
   const el = msgBox.value
   if (!el) return
-  stickToBottom.value = shouldStickToBottom(el)
+  stickToBottom.value = nextStick({
+    near: shouldStickToBottom(el),
+    programmatic: programmaticScroll,
+    userScrolling: Date.now() < userScrollUntil,
+    stick: stickToBottom.value,
+  })
 }
 
 let scrollScheduled = false
@@ -1612,7 +1627,9 @@ async function pickGallery() {
         </button>
       </div>
 
-      <div ref="msgBox" class="messages" @scroll="onChatScroll">
+      <div ref="msgBox" class="messages" @scroll="onChatScroll"
+        @touchstart.passive="noteUserScroll" @touchmove.passive="noteUserScroll"
+        @wheel.passive="noteUserScroll" @pointerdown="noteUserScroll">
         <div class="history-actions">
           <span v-if="historyLoading">正在加载历史…</span>
           <template v-else-if="historyError"><span>{{ historyError }}</span><button class="sm" :disabled="!connected" @click="loadHistory()">重试</button></template>
