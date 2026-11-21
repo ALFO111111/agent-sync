@@ -76,6 +76,13 @@ jobs:
         with:
           platform: ${{ matrix.platform }}
           version: ${{ steps.ver.outputs.version }}
+          windows_cert_base64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          windows_cert_password: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          macos_cert_base64: ${{ secrets.MACOS_CERT_BASE64 }}
+          macos_cert_password: ${{ secrets.MACOS_CERT_PASSWORD }}
+          macos_notary_apple_id: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          macos_notary_password: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          macos_notary_team_id: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
 
       - uses: actions/upload-artifact@v7
         with:
@@ -134,6 +141,43 @@ jobs:
           name: dist-Android
           path: dist/*.apk
           if-no-files-found: error
+
+  manifest:
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # 私钥只放在 GitHub secret（或离线机器）。没有配置时跳过，客户端自动回退 GitHub API。
+      - name: Generate signed update manifests
+        shell: bash
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_ASSET_BASE: ${{ secrets.UPDATE_ASSET_BASE }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "${UPDATE_SIGNING_KEY:-}" ]; then
+            echo "::warning::UPDATE_SIGNING_KEY is not configured; skipping the signed update channel."
+            exit 0
+          fi
+          v="${GITHUB_REF_NAME#v}"
+          key="$RUNNER_TEMP/update.key"
+          printf '%s' "$UPDATE_SIGNING_KEY" > "$key"
+          chmod 600 "$key"
+          base="${UPDATE_ASSET_BASE:-https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}}"
+          go run ./scripts/update-manifest -version "$v" -platform windows/amd64 \
+            -file dist/agent-sync.exe -url "$base/agent-sync.exe" \
+            -key "$key" -out dist/latest-windows-amd64.json
+          go run ./scripts/update-manifest -version "$v" -platform darwin/arm64 \
+            -file "dist/agent-sync-$v-macos-arm64.dmg" -url "$base/agent-sync-$v-macos-arm64.dmg" \
+            -key "$key" -out dist/latest-darwin-arm64.json
+          gh release upload "$GITHUB_REF_NAME" dist/latest-windows-amd64.json dist/latest-darwin-arm64.json --clobber
 
   release:
     needs: [build, android]

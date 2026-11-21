@@ -33,12 +33,19 @@ func Download(ctx context.Context, info *Info, dir string, progress func(done, t
 	if info.Asset == "" || info.assetURL == "" {
 		return "", ErrNoAsset
 	}
-	if info.sumsURL == "" {
-		return "", errors.New(i18n.T("发布里没有 SHA256SUMS.txt，没法校验下载的文件"))
+	want := strings.ToLower(info.sha256)
+	if want == "" {
+		if info.sumsURL == "" {
+			return "", errors.New(i18n.T("发布里没有 SHA256SUMS.txt，没法校验下载的文件"))
+		}
+		var err error
+		want, err = expectedSum(ctx, info.sumsURL, info.Asset)
+		if err != nil {
+			return "", err
+		}
 	}
-	want, err := expectedSum(ctx, info.sumsURL, info.Asset)
-	if err != nil {
-		return "", err
+	if len(want) != 64 {
+		return "", errors.New(i18n.T("下载地址缺少有效的 SHA256，已拒绝"))
 	}
 	dst := filepath.Join(dir, info.Asset+".download")
 	if err := fetch(ctx, info.assetURL, dst, info.size, progress); err != nil {

@@ -7,6 +7,34 @@ inputs:
   platform:
     required: true
     description: windows/amd64 or darwin/arm64
+  windows_cert_base64:
+    required: false
+    default: ''
+    description: Base64 PFX for Windows code signing (optional)
+  windows_cert_password:
+    required: false
+    default: ''
+    description: PFX password (optional)
+  macos_cert_base64:
+    required: false
+    default: ''
+    description: Base64 P12 Developer ID Application certificate (optional)
+  macos_cert_password:
+    required: false
+    default: ''
+    description: P12 password (optional)
+  macos_notary_apple_id:
+    required: false
+    default: ''
+    description: Apple ID for notarytool (optional)
+  macos_notary_password:
+    required: false
+    default: ''
+    description: App-specific password for notarytool (optional)
+  macos_notary_team_id:
+    required: false
+    default: ''
+    description: Apple team ID (optional)
 runs:
   using: composite
   steps:
@@ -29,6 +57,58 @@ runs:
         PRODUCT_VERSION: ${{ inputs.version }}
         TARGET_PLATFORM: ${{ inputs.platform }}
       run: go run ./scripts/build-desktop -platform "$TARGET_PLATFORM" -version "$PRODUCT_VERSION"
+    - name: Sign Windows executable (optional)
+      if: runner.os == 'Windows' && inputs.windows_cert_base64 != ''
+      shell: pwsh
+      env:
+        CERT_B64: ${{ inputs.windows_cert_base64 }}
+        CERT_PASS: ${{ inputs.windows_cert_password }}
+      run: |
+        $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+        [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
+        $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+          Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+        if (-not $signtool) { throw 'signtool.exe not found' }
+        & $signtool sign /f $pfx /p $env:CERT_PASS /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 build/bin/agent-sync.exe
+        if ($LASTEXITCODE -ne 0) { throw "signtool failed: $LASTEXITCODE" }
+    - name: Warn unsigned Windows build
+      if: runner.os == 'Windows' && inputs.windows_cert_base64 == ''
+      shell: bash
+      run: echo "::warning::WINDOWS_CERT_BASE64 is not configured; the Windows executable is unsigned."
+    - name: Sign and notarize macOS app (optional)
+      if: runner.os == 'macOS' && inputs.macos_cert_base64 != ''
+      shell: bash
+      env:
+        CERT_B64: ${{ inputs.macos_cert_base64 }}
+        CERT_PASS: ${{ inputs.macos_cert_password }}
+        APPLE_ID: ${{ inputs.macos_notary_apple_id }}
+        APPLE_PASSWORD: ${{ inputs.macos_notary_password }}
+        APPLE_TEAM_ID: ${{ inputs.macos_notary_team_id }}
+      run: |
+        set -euo pipefail
+        keychain="$RUNNER_TEMP/signing.keychain-db"
+        security create-keychain -p actions "$keychain"
+        security set-keychain-settings -lut 21600 "$keychain"
+        security unlock-keychain -p actions "$keychain"
+        printf '%s' "$CERT_B64" | base64 -d > "$RUNNER_TEMP/cert.p12"
+        security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CERT_PASS" -T /usr/bin/codesign
+        security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+        security set-key-partition-list -S apple-tool:,apple: -k actions "$keychain"
+        identity="$(security find-identity -v -p codesigning "$keychain" | sed -n -E 's/.*"(Developer ID Application[^"]*)"/\1/p' | head -1)"
+        test -n "$identity"
+        codesign --deep --force --options runtime --timestamp --sign "$identity" build/bin/agent-sync.app
+        codesign --verify --deep --strict --verbose=2 build/bin/agent-sync.app
+        if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+          ditto -c -k --keepParent build/bin/agent-sync.app "$RUNNER_TEMP/agent-sync.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/agent-sync.zip" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple build/bin/agent-sync.app
+        else
+          echo "::warning::Notarization secrets are missing; the app is signed but not notarized."
+        fi
+    - name: Warn unsigned macOS build
+      if: runner.os == 'macOS' && inputs.macos_cert_base64 == ''
+      shell: bash
+      run: echo "::warning::MACOS_CERT_BASE64 is not configured; the macOS app is unsigned and not notarized."
     - name: Package Windows executable
       if: runner.os == 'Windows'
       shell: bash

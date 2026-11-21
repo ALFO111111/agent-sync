@@ -38,6 +38,7 @@ type Info struct {
 
 	assetURL string
 	sumsURL  string
+	sha256   string
 	size     int64
 }
 
@@ -53,10 +54,17 @@ type release struct {
 	} `json:"assets"`
 }
 
-// Check 问 GitHub 最新的正式版。releases/latest 本来就不返回预发布和草稿。
+// Check 先问自有签名清单；清单不可用（未配置、断网、验签失败）才回退 GitHub。
 func Check(ctx context.Context, current string) (*Info, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	if info, err := checkManifest(ctx, current); err == nil {
+		return info, nil
+	}
+	return checkGitHub(ctx, current)
+}
+
+func checkGitHub(ctx context.Context, current string) (*Info, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/repos/"+Repo+"/releases/latest", nil)
 	if err != nil {
 		return nil, err
