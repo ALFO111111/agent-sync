@@ -95,6 +95,8 @@ jobs:
   android:
     needs: preflight
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 读取同一 tag 的 draft Release 里的暂存 APK
     steps:
       - uses: actions/checkout@v7
         with:
