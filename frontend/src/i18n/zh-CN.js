@@ -413,6 +413,7 @@ export default {
     noAccount: '还没有账号？去官网注册',
     accountForm: '账号',
     loginCredentialHint: '这里填官网账号密码，不是“连接凭据”里的 MQTT 用户名密码。',
+    loginInMain: '还没有登录官方账号，请先关闭编辑，在上面的登录框里登录。',
     logout: '退出登录',
     account: '已登录账号',
     loggedIn: '已登录',

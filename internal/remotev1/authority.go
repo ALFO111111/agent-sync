@@ -50,6 +50,7 @@ type State struct {
 
 	// 官方模式登录后写入；自建模式保持为空。
 	AccountID    string `json:"accountId,omitempty"`
+	Username     string `json:"username,omitempty"` // 展示用；AccountID 仍是 MQTT 主题命名空间
 	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
@@ -69,6 +70,7 @@ type Invitation struct {
 	ContentKey string    `json:"contentKey"`
 	HostID     string    `json:"hostId"`
 	HostName   string    `json:"hostName"`
+	Username   string    `json:"username,omitempty"` // 官方模式的账号用户名，仅用于手机确认框展示
 	Expires    time.Time `json:"expires"`
 	// 官方模式的短期配对凭据；手机扫码后用它连 Broker 的 pair 主题，不需要登录账号。
 	MQTTUser     string `json:"mqttUser,omitempty"`
@@ -223,11 +225,12 @@ func (a *Authority) SetUID(uid string) {
 	a.uid = uid
 }
 
-// SetAccount 保存官方模式的账号和 refresh token（加密状态文件）。
-func (a *Authority) SetAccount(accountID, refreshToken string) error {
+// SetAccount 保存官方模式的账号、用户名和 refresh token（加密状态文件）。
+func (a *Authority) SetAccount(accountID, username, refreshToken string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.state.AccountID = accountID
+	a.state.Username = username
 	a.state.RefreshToken = refreshToken
 	return a.saveLocked()
 }
@@ -237,6 +240,7 @@ func (a *Authority) Logout() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.state.AccountID = ""
+	a.state.Username = ""
 	a.state.RefreshToken = ""
 	return a.saveLocked()
 }

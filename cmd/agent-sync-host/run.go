@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -31,6 +32,59 @@ type daemon struct {
 	brokerMu    sync.RWMutex
 	brokerState string // disconnected / connecting / connected / error
 	lastError   string
+
+	// host.Auth 会在重连循环里替换；控制通道并发读取，必须加锁。
+	authMu sync.RWMutex
+	// 当前一轮 MQTT 连接的取消函数；退出登录/换账号时用它立刻断开旧链路。
+	loopMu     sync.Mutex
+	loopCancel context.CancelFunc
+	// 套餐/流量是公网请求，缓存 60 秒，避免桌面端每 3 秒轮询时反复打 auth。
+	usageMu      sync.Mutex
+	usageFetchMu sync.Mutex
+	usageAt      time.Time
+	usagePlan    string
+	usageExp     int64
+	usageUsed    int64
+	usageQuota   int64
+}
+
+func (d *daemon) setAuth(ac remotev1.DeviceRegistrar) {
+	if d.host == nil {
+		return
+	}
+	d.authMu.Lock()
+	d.host.Auth = ac
+	d.authMu.Unlock()
+}
+
+func (d *daemon) getAuth() remotev1.DeviceRegistrar {
+	if d.host == nil {
+		return nil
+	}
+	d.authMu.RLock()
+	defer d.authMu.RUnlock()
+	return d.host.Auth
+}
+
+// setLoopCancel 登记新一轮连接的取消函数，并停掉上一轮（如果有）。
+func (d *daemon) setLoopCancel(cancel context.CancelFunc) {
+	d.loopMu.Lock()
+	old := d.loopCancel
+	d.loopCancel = cancel
+	d.loopMu.Unlock()
+	if old != nil {
+		old()
+	}
+}
+
+// reconnect 立刻断开当前 MQTT 链路，让主循环用最新账号状态重新连接。
+func (d *daemon) reconnect() {
+	d.loopMu.Lock()
+	cancel := d.loopCancel
+	d.loopMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (d *daemon) setBroker(state, errText string) {
@@ -134,16 +188,22 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 		auth.SetUID(uid)
 		topics := remotev1.TopicSet{UID: uid, HID: state.HostID, DID: state.HostID}
 
+		if mode == "official" && (state.AccountID == "" || state.RefreshToken == "") {
+			d.setAuth(nil)
+			fmt.Fprintln(os.Stderr, i18n.T("等待账号登录后连接 MQTT"))
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+			}
+			continue
+		}
+
+		// 这一轮连接的独立 ctx：退出登录/换账号时 cancel 它，立刻断开旧链路。
+		loopCtx, loopCancel := context.WithCancel(ctx)
+		d.setLoopCancel(loopCancel)
+
 		var token mqttlink.TokenProvider
 		if mode == "official" {
-			if state.AccountID == "" || state.RefreshToken == "" {
-				fmt.Fprintln(os.Stderr, i18n.T("等待账号登录后连接 MQTT"))
-				select {
-				case <-ctx.Done():
-				case <-time.After(time.Second):
-				}
-				continue
-			}
 			token = &mqttlink.HTTPTokenProvider{
 				BaseURL:      "https://agent-sync.yirenzaowusuo.cn/api",
 				RefreshToken: state.RefreshToken,
@@ -160,7 +220,42 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 				return err
 			}
 			ac := remotev1.NewAuthClient("https://agent-sync.yirenzaowusuo.cn/api", state.RefreshToken)
-			if err := ac.RegisterHost(ctx, state.HostID, hostName, identity.PublicBase64()); err != nil {
+			// 先校验会话并补用户名，再登记电脑：token 过期时 RegisterHost 会先 401，
+			// 如果先调它，后面的 401 处理永远走不到。
+			name, meErr := ac.Me(loopCtx)
+			if meErr != nil {
+				if authExpired(meErr) {
+					logf("account session expired; waiting for a new login")
+					_ = auth.Logout()
+					d.setAuth(nil)
+					d.setBroker("disconnected", "")
+					select {
+					case <-ctx.Done():
+					case <-time.After(backoff):
+					}
+					continue
+				}
+				logf("check account: %v", meErr)
+				select {
+				case <-ctx.Done():
+				case <-time.After(backoff):
+				}
+				continue
+			}
+			if name != "" && name != state.Username {
+				_ = auth.SetAccount(state.AccountID, name, state.RefreshToken)
+			}
+			if err := ac.RegisterHost(loopCtx, state.HostID, hostName, identity.PublicBase64()); err != nil {
+				if authExpired(err) {
+					logf("account session expired; waiting for a new login")
+					_ = auth.Logout()
+					d.setAuth(nil)
+					select {
+					case <-ctx.Done():
+					case <-time.After(backoff):
+					}
+					continue
+				}
 				logf("register host: %v", err)
 				select {
 				case <-ctx.Done():
@@ -168,22 +263,24 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 				}
 				continue
 			}
-			host.Auth = ac
+			d.setAuth(ac)
 		} else {
-			host.Auth = nil
+			d.setAuth(nil)
 		}
 
 		// 断线时 Broker 会按遗嘱把状态置为 offline；重连后要重新写回 online，
 		// 否则手机一直以为电脑不在线。
+		var connected atomic.Bool
 		var live atomic.Pointer[mqttlink.Link]
 		d.setBroker("connecting", "")
-		tr, err := mqttlink.NewWithContext(ctx, mqttlink.Config{
+		tr, err := mqttlink.NewWithContext(loopCtx, mqttlink.Config{
 			URL:         broker,
 			ClientID:    state.HostID,
 			Token:       token,
 			WillTopic:   topics.Status(),
 			WillPayload: []byte(`{"online":false}`),
 			OnConnect: func() {
+				connected.Store(true)
 				d.setBroker("connected", "")
 				l := live.Load()
 				if l == nil {
@@ -196,13 +293,22 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 		})
 		if err == nil {
 			live.Store(tr)
-			err = host.Run(ctx, tr, topics)
+			err = host.Run(loopCtx, tr, topics)
 			live.Store(nil)
 			tr.Close()
 		}
 		if ctx.Err() != nil {
 			d.setBroker("disconnected", "")
 			break
+		}
+		// 主动断开（退出登录/换账号）不需要退避，下一轮立刻按新状态重连。
+		if loopCtx.Err() != nil {
+			d.setBroker("disconnected", "")
+			backoff = time.Second
+			continue
+		}
+		if connected.Load() {
+			backoff = time.Second
 		}
 		if err != nil {
 			d.setBroker("error", err.Error())
@@ -217,10 +323,17 @@ func runDaemon(ctx context.Context, dir, broker, mode, username, password, hostN
 			break
 		case <-time.After(backoff):
 		}
-		if backoff < 30*time.Second {
+		if !connected.Load() && backoff < 30*time.Second {
 			backoff *= 2
 		}
 	}
 	fmt.Fprintln(os.Stderr, i18n.T("主机守护已停止"))
 	return nil
+}
+
+// authExpired 判断鉴权服务是否明确拒绝了当前会话（401/403）；
+// 网络错误不算，否则断网会把用户踢下线。
+func authExpired(err error) bool {
+	var se *remotev1.StatusError
+	return errors.As(err, &se) && (se.Code == http.StatusUnauthorized || se.Code == http.StatusForbidden)
 }

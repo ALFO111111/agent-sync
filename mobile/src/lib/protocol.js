@@ -40,16 +40,66 @@ export function fingerprint(pubB64) {
   return Array.from(hash, b => b.toString(16).padStart(2, '0')).join('')
 }
 
-export function parseDeepLink(url) {
+const HEX64 = /^[0-9a-f]{64}$/i
+const HEX_ID = /^[0-9a-f]{16,64}$/i
+
+function validContentKey(s) {
+  if (typeof s !== 'string') return false
+  try { return unb64(s).length === 32 } catch { return false }
+}
+
+// 校验邀请结构。深链/二维码可以被本机任意 App 伪造，确认框里显示的名称
+// 也不能直接信任；至少保证字段类型、URL 协议和密钥长度符合协议。
+export function validateInvitation(inv) {
+  if (!inv || inv.v !== 3) return false
+  if (typeof inv.hostId !== 'string' || !HEX_ID.test(inv.hostId)) return false
+  if (typeof inv.id !== 'string' || !HEX64.test(inv.id)) return false
+  if (typeof inv.secret !== 'string' || !HEX64.test(inv.secret)) return false
+  if (!validContentKey(inv.contentKey)) return false
+  if (typeof inv.url !== 'string') return false
   try {
-    // 注意：WebView 对 agent-sync://pair?... 的 hostname 解析为空白，
-    // 不能依赖 host，只校验 scheme 和 d 参数。
-    if (typeof url !== 'string' || !url.startsWith('agent-sync:')) return null
+    const u = new URL(inv.url)
+    const schemeOK = u.protocol === 'wss:' || (inv.mode === 'selfhost' && u.protocol === 'ws:')
+    if (!schemeOK || !u.host || u.username || u.password || u.search || u.hash || u.pathname !== '/mqtt') return false
+  } catch {
+    return false
+  }
+  if (inv.mode !== undefined && inv.mode !== 'official' && inv.mode !== 'selfhost') return false
+  if (inv.hostName !== undefined && (typeof inv.hostName !== 'string' || inv.hostName.length > 128)) return false
+  if (inv.username !== undefined && (typeof inv.username !== 'string' || inv.username.length > 64)) return false
+  return true
+}
+
+function decodeDeepLink(url) {
+  if (typeof url !== 'string' || !url.startsWith('agent-sync:')) return null
+  try {
     const data = new URL(url).searchParams.get('d')
     return data ? JSON.parse(new TextDecoder().decode(unb64url(data))) : null
   } catch {
     return null
   }
+}
+
+// 同时接受 agent-sync://pair?d=... 深链和直接粘贴/扫描到的 JSON。
+export function parseInvitation(raw) {
+  if (typeof raw !== 'string') return null
+  if (raw.startsWith('agent-sync:')) {
+    const inv = decodeDeepLink(raw)
+    return validateInvitation(inv) ? inv : null
+  }
+  try {
+    const inv = JSON.parse(raw)
+    return validateInvitation(inv) ? inv : null
+  } catch {
+    return null
+  }
+}
+
+export function parseDeepLink(url) {
+  // 注意：WebView 对 agent-sync://pair?... 的 hostname 解析为空白，
+  // 不能依赖 host，只校验 scheme 和 d 参数。
+  const inv = decodeDeepLink(url)
+  return validateInvitation(inv) ? inv : null
 }
 
 export class Session {

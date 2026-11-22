@@ -1,27 +1,5 @@
 <template>
   <div class="remote">
-    <!-- 官方模式未登录：首屏直接给账号密码，不让用户先去找“编辑连接信息” -->
-    <div v-if="needLogin" class="card login-first">
-      <div class="card-head">
-        <h3>{{ t('remote.loginFirstTitle') }}</h3>
-        <span class="badge info">1 / 3</span>
-      </div>
-      <div class="muted small">{{ t('remote.loginFirstHint') }}</div>
-      <div class="row wrap mt">
-        <input v-model.trim="auth.username" autocomplete="username" :placeholder="t('remote.username')" @keyup.enter="submitAuth" />
-        <input v-model="auth.password" type="password" autocomplete="current-password" :placeholder="t('remote.password')" @keyup.enter="submitAuth" />
-        <button class="primary" :disabled="authBusy || !auth.username || !auth.password" @click="submitAuth">
-          {{ authBusy ? t('remote.loggingIn') : t('remote.login') }}
-        </button>
-      </div>
-      <div class="hint mt">{{ t('remote.loginCredentialHint') }}</div>
-      <div v-if="authError" class="err-box mt">{{ authError }}</div>
-      <div class="row wrap mt">
-        <a href="#" @click.prevent="openRegister">{{ t('remote.noAccount') }}</a>
-        <a href="#" @click.prevent="openDownload">{{ t('remote.downloadApp') }}</a>
-      </div>
-    </div>
-
     <!-- 连接信息：默认只读展示，右上角进入编辑；编辑时表单就在最上面 -->
     <div class="card">
       <div class="card-head">
@@ -34,6 +12,25 @@
         </div>
       </div>
       <div class="muted small">{{ t('remote.subtitle') }}</div>
+
+      <!-- 官方模式未登录：登录就放在这一张卡里，不再单独重复一张登录卡 -->
+      <div v-if="needLogin && !editing" class="login-box mt">
+        <div class="muted small">{{ t('remote.loginFirstHint') }}</div>
+        <div class="row wrap mt">
+          <input v-model.trim="auth.username" autocomplete="username" :placeholder="t('remote.username')" @keyup.enter="submitAuth" />
+          <input v-model="auth.password" type="password" autocomplete="current-password" :placeholder="t('remote.password')" @keyup.enter="submitAuth" />
+          <button class="primary" :disabled="authBusy || !auth.username || !auth.password" @click="submitAuth">
+            {{ authBusy ? t('remote.loggingIn') : t('remote.login') }}
+          </button>
+        </div>
+        <div class="hint mt">{{ t('remote.loginCredentialHint') }}</div>
+        <div v-if="authError" class="err-box mt">{{ authError }}</div>
+        <div class="row wrap mt">
+          <a href="#" @click.prevent="openRegister">{{ t('remote.noAccount') }}</a>
+          <a href="#" @click.prevent="openDownload">{{ t('remote.downloadApp') }}</a>
+        </div>
+      </div>
+
       <div class="steps mt">
         <span :class="{ on: stepIndex >= 1, done: stepIndex > 1 }">{{ t('remote.stepLogin') }}</span>
         <span :class="{ on: stepIndex >= 2, done: stepIndex > 2 }">{{ t('remote.stepStart') }}</span>
@@ -52,6 +49,7 @@
         <div v-else class="info-box mt">{{ t('remote.hostNotRunning') }}</div>
 
         <div v-if="st.loggedIn" class="info-grid mt">
+          <div><div class="k">{{ t('remote.account') }}</div><div class="v">{{ auth.username || st.username || auth.accountId || '—' }}</div></div>
           <div><div class="k">{{ t('remote.plan') }}</div><div class="v">{{ planLabel(st.plan) }}</div></div>
           <div><div class="k">{{ t('remote.expiry') }}</div><div class="v">{{ fmtExpiry(st.planExpiresAt) }}</div></div>
           <div class="wide">
@@ -79,7 +77,7 @@
           </div>
           <div class="form-row">
             <label>{{ t('remote.mode') }}</label>
-            <select v-model="form.mode">
+            <select v-model="form.mode" @change="onModeChange">
               <option value="official">{{ t('remote.modeOfficial') }}</option>
               <option value="selfhost">{{ t('remote.modeSelfHost') }}</option>
             </select>
@@ -89,28 +87,14 @@
             <input v-model.trim="form.broker" placeholder="wss://agent-sync.yirenzaowusuo.cn/mqtt" :disabled="form.mode === 'official'" />
           </div>
           <template v-if="form.mode === 'official'">
-            <div v-if="!auth.loggedIn" class="form-row wide">
-              <label>{{ t('remote.accountForm') }}</label>
-              <div class="row wrap">
-                <input v-model.trim="auth.username" autocomplete="username" :placeholder="t('remote.username')" />
-                <input v-model="auth.password" type="password" autocomplete="current-password" :placeholder="t('remote.password')" />
-                <button class="primary" :disabled="authBusy" @click="submitAuth">
-                  {{ authBusy ? t('remote.loggingIn') : t('remote.login') }}
-                </button>
-              </div>
-              <div class="hint">{{ t('remote.loginCredentialHint') }}</div>
-              <div v-if="authError" class="err-box mt">{{ authError }}</div>
-              <div class="hint">
-                <a href="#" @click.prevent="openRegister">{{ t('remote.noAccount') }}</a>
-              </div>
-            </div>
-            <div v-else class="form-row wide">
+            <div class="form-row wide">
               <label>{{ t('remote.account') }}</label>
-              <div class="row wrap">
+              <div v-if="auth.loggedIn" class="row wrap">
                 <span class="badge ok">{{ t('remote.loggedIn') }}</span>
-                <span class="mono">{{ auth.accountId }}</span>
+                <span>{{ auth.username || auth.accountId }}</span>
                 <button class="sm ghost" :disabled="authBusy" @click="logout">{{ t('remote.logout') }}</button>
               </div>
+              <div v-else class="row wrap muted small">{{ t('remote.loginInMain') }}</div>
             </div>
           </template>
           <template v-if="form.mode === 'selfhost'">
@@ -316,12 +300,21 @@ const brokerBadgeClass = computed(() => {
   return 'info'
 })
 
+const OFFICIAL_BROKER = 'wss://agent-sync.yirenzaowusuo.cn/mqtt'
+
+function normalizeOfficialBroker() {
+  // 官方模式只允许官方 wss；不把上次自建留下的 ws:// 带进去。
+  if ((form.value.mode || 'official') === 'official') form.value.broker = OFFICIAL_BROKER
+}
+
+function onModeChange() {
+  normalizeOfficialBroker()
+}
+
 async function loadConfig() {
   try {
     form.value = await api.GetRemoteConfig()
-    if (form.value.mode === 'official' && !form.value.broker) {
-      form.value.broker = 'wss://agent-sync.yirenzaowusuo.cn/mqtt'
-    }
+    normalizeOfficialBroker()
   } catch (e) {
     err.value = String(e)
   }
@@ -332,6 +325,7 @@ async function loadAuth() {
     const a = await api.RemoteAuthStatus()
     auth.value.loggedIn = !!a.loggedIn
     auth.value.accountId = a.accountId || ''
+    auth.value.username = a.username || auth.value.username || ''
   } catch {
     auth.value.loggedIn = false
   }
@@ -341,10 +335,11 @@ async function submitAuth() {
   authError.value = ''
   authBusy.value = true
   try {
-    await api.LoginRemote(auth.value.username, auth.value.password, form.value.broker || 'wss://agent-sync.yirenzaowusuo.cn/mqtt')
+    normalizeOfficialBroker()
+    await api.LoginRemote(auth.value.username, auth.value.password, form.value.broker || OFFICIAL_BROKER)
     auth.value.password = ''
     await loadAuth()
-    ok(t('remote.loginSuccess', { account: auth.value.accountId || auth.value.username }))
+    ok(t('remote.loginSuccess', { account: auth.value.username || auth.value.accountId }))
   } catch (e) {
     authError.value = String(e)
     fail(String(e))
@@ -386,6 +381,8 @@ async function logout() {
 }
 
 async function refresh() {
+  // 窗口最小化/切走后不再每 3 秒打 4 次本机控制请求。
+  if (typeof document !== 'undefined' && document.hidden) return
   try {
     const next = await api.GetRemoteStatus()
     st.value = next
@@ -532,6 +529,7 @@ async function stopSession(a) {
 async function saveConfig() {
   busy.value = true
   try {
+    normalizeOfficialBroker()
     const before = JSON.parse(loaded || '{}')
     const wasRunning = st.value.running
     const restart = wasRunning && ['mode', 'broker', 'username', 'password', 'proxy'].some((k) => form.value[k] !== before[k])
@@ -596,7 +594,8 @@ onUnmounted(() => { clearInterval(timer); clearInterval(nowTimer) })
 .steps span { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
 .steps span.on { border-color: var(--accent); color: var(--accent); }
 .steps span.done { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.login-first { border-color: var(--accent); }
+.login-box { border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px; background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.login-box input { min-width: 160px; }
 .invite-body { display: flex; gap: 18px; align-items: flex-start; }
 .qr { width: 300px; height: 300px; border-radius: 8px; background: #fff; padding: 6px; flex: none; }
 .invite-text { width: 100%; margin: 10px 0; resize: vertical; word-break: break-all; font-size: 12px; }

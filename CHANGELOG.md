@@ -5,7 +5,7 @@
 
 All notable changes are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-23
 
 ### 变更 / Changed
 
@@ -29,6 +29,18 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - 电脑端 MQTT 断线后自动重连、重新订阅、刷新 token，并在重连后重发 `{"online":true}`。此前 `AutoReconnect` 被关闭，网络抖动一次后主机会永久离线。
   The host now reconnects automatically, re-subscribes, refreshes credentials and republishes its online status. Previously auto-reconnect was disabled, so a single network blip left the host offline forever.
 
+- 登录/扫码：host 启动时先校验会话，账号被删或改密会立刻退出登录；运行中登录会重启 host，二维码不再属于旧账号。
+  Sign-in and pairing: the host validates the session before registering, logs out on 401/403, and restarts after an in-app login so the QR code never belongs to the previous account.
+- 手机确认框显示「用户名（主机名）」，不再显示 32 位 ID；冷启动深链去重，避免弹两次确认框。
+  The phone confirmation shows the username (and computer name) instead of a 32-character ID, and cold-start deep links are de-duplicated.
+- 官方模式强制使用官方 wss 中转，不再沿用上一次自建留下的 `ws://`，避免设备凭据被明文发到错误 Broker。
+  Official mode always uses the official wss relay; leftover self-hosted `ws://` addresses are ignored.
+- 退出登录/换账号立即断开旧 MQTT 链路；套餐/流量缓存 60 秒，桌面端轮询不再每 3 秒打两次公网接口。
+  Logout and account switches tear down the old MQTT link immediately; plan/usage data is cached for 60 seconds so desktop polling no longer hammers the public API.
+- 自建模式的 MQTT 密码改用 0600 临时文件传给 host，不再出现在命令行参数里。
+  Self-hosted MQTT passwords are passed to the host through a 0600 file instead of the command line.
+- 签名更新清单改为从 GitHub Release 的 `latest-<os>-<arch>.json` 获取；之前官网路由不存在，实际一直回退到 GitHub API。
+  The signed update manifest is now fetched from the release asset `latest-<os>-<arch>.json`; the old website route did not exist, so clients always fell back to the GitHub API.
 ### 新增 / Added
 
 - 每台手机使用独立的会话密钥：删除或撤销一台手机只影响它自己，其他手机继续正常工作，不需要重新配对。旧 App 重连时会自动迁移；协议通过 `device.key.v1` 能力协商，旧电脑仍可回退到共用密钥。
@@ -37,6 +49,10 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
   Android local notifications when a turn finishes or an approval is waiting while the app is in the background.
 - 聊天页智能滚动（用户上滑时不抢滚动条）、中文输入法回车保护、发送失败保留输入与附件。
 - 配对请求 5 分钟无操作自动过期，桌面端显示倒计时；过期后手机收到 `denied`。
+- 自建 Broker 支持 Android 明文 `ws://`（`allowMixedContent` + `usesCleartextTraffic`）；官方中转仍然只走 `wss://`。
+  Self-hosted brokers can use Android cleartext `ws://`; official mode still uses `wss://` only.
+- 手机对深链/二维码邀请做结构校验（v3、hostId、密钥长度、URL 协议），伪造的确认框不会再显示任意名称。
+  The phone validates invitation structure (v3, host ID, key length and URL scheme) before showing the confirmation dialog.
 
 ### 修复 / Fixed
 
@@ -50,7 +66,17 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - 慢的文件/git 请求只阻塞当前设备，不再卡住所有手机；git 命令加 10 秒超时。
 - 首次获取 MQTT token 使用调用方超时，token 服务卡住时 host 能失败退出而不是永久挂死。
 
-## [0.7.0] - 2026-11-14
+
+### 官方服务 / Hosted service
+
+- 免费档调整为 **2 台电脑 + 1 台手机 / 1 GB 月流量**；Pro 仍为 5 台电脑 + 2 台手机 / 30 GB。
+  Free tier is now **2 computers + 1 phone / 1 GB per month**; Pro stays at 5 computers + 2 phones / 30 GB.
+- 取消恢复码：忘记密码改为联系客服微信 `JDI_UOT_S_T`，由管理员人工重置。
+  Recovery codes are removed; password resets go through customer service WeChat `JDI_UOT_S_T`.
+- 支付回调同时接受 GET 与 POST；升级页会丢弃失效/不属于当前账号的旧订单，修复“订单不存在”后无法重新购买。
+  Payment callbacks accept both GET and POST; the upgrade page discards stale or foreign orders so users can always buy again.
+- 管理员降级到免费档会立即暂停超额设备；退款只允许已支付订单，且不会误删其他已支付订单的 Pro；管理员重置密码会轮换 MQTT 版本并断开所有设备。
+  Admin downgrades pause extra devices immediately; refunds are limited to paid orders and do not revoke Pro granted by another paid order; admin password resets rotate MQTT credentials and disconnect all devices.
 
 ### 变更 / Changed
 

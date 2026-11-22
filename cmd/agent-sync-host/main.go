@@ -95,6 +95,7 @@ func run(args []string) int {
 		mode := fs.String("mode", "selfhost", "official or selfhost")
 		user := fs.String("user", "", "selfhost MQTT username")
 		pass := fs.String("pass", "", "selfhost MQTT password")
+		passFile := fs.String("pass-file", "", "read selfhost MQTT password from a 0600 file (preferred over -pass)")
 		name := fs.String("name", "", "host display name")
 		claudeBin := fs.String("claude-bin", "", "path to the claude cli (auto-detected when empty)")
 		dir := fs.String("state", defaultStateDir(), "state directory")
@@ -106,6 +107,14 @@ func run(args []string) int {
 		if *broker == "" || (*mode != "official" && *mode != "selfhost") {
 			usage()
 			return 2
+		}
+		if *passFile != "" {
+			b, err := os.ReadFile(*passFile)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, i18n.T("读取 MQTT 密码文件失败：%s", err))
+				return 1
+			}
+			*pass = strings.TrimRight(string(b), "\r\n")
 		}
 		i18n.Set(*lang)
 		hostName := *name
@@ -198,7 +207,7 @@ func run(args []string) int {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host version")
-	fmt.Fprintln(os.Stderr, "  agent-sync-host run -broker wss://host/mqtt [-mode official|selfhost] [-user U -pass P] [-name NAME] [-state DIR] [-lang zh-CN|en]")
+	fmt.Fprintln(os.Stderr, "  agent-sync-host run -broker wss://host/mqtt [-mode official|selfhost] [-user U] [-pass P | -pass-file F] [-name NAME] [-state DIR] [-lang zh-CN|en]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host invite|pending|devices|status|quit [-state DIR]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host account <accountId> <sessionToken> [-state DIR]")
 	fmt.Fprintln(os.Stderr, "  agent-sync-host logout [-state DIR]")

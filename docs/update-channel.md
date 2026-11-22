@@ -2,15 +2,16 @@
 
 ## 客户端顺序
 
-1. **自有签名清单**：`GET https://agent-sync.yirenzaowusuo.cn/api/update/latest?platform=windows/amd64`
+1. **签名清单**：随 Release 发布的 `latest-windows-amd64.json` / `latest-darwin-arm64.json`：
+   `GET https://github.com/ALFO111111/agent-sync/releases/latest/download/latest-windows-amd64.json`
 2. 清单用内置 Ed25519 公钥验签；版本、URL、SHA256 任一被改都会失败。
 3. 验签通过后按清单里的 `url` 下载，先核对清单里的 SHA256，再替换程序。
-4. 清单不可用（未部署、404、断网、验签失败）才回退 GitHub Releases API。回退路径仍校验 `SHA256SUMS.txt`。
+4. 清单不可用（未配置签名、404、断网、验签失败）才回退 GitHub Releases API。回退路径仍校验 `SHA256SUMS.txt`。
 
 当前内置公钥在 `internal/update/manifest.go` 的 `manifestPubKey`。私钥在开发机仓库外：
 
 ```
-D:\developProject\.agent-sync-signing\update-ed25519.key
+<仓库外路径>/update-ed25519.key
 ```
 
 **私钥必须离线备份，不要提交、不要上传网盘。** 丢失私钥后，已发布的客户端无法信任新清单，只能随下一次客户端发版更换公钥。

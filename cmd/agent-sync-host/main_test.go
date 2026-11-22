@@ -88,6 +88,9 @@ func TestInviteCarriesPairCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := auth.SetAccount("acc-1", "alice", "refresh-token"); err != nil {
+		t.Fatal(err)
+	}
 	host := &remotev1.Host{Authority: auth, Auth: fakeRegistrar{}}
 	d := daemon{auth: auth, host: host, hostName: "test", broker: "wss://example/mqtt", mode: "official"}
 	got := d.handle(ctlRequest{Cmd: "invite"})

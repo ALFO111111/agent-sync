@@ -23,6 +23,14 @@ type DeviceRegistrar interface {
 	AccountUsage(ctx context.Context) (plan string, planExpiresAt, usedBytes, quotaBytes int64, err error)
 }
 
+// StatusError 保留鉴权服务的 HTTP 状态码，调用方据此区分“登录失效”和“网络错误”。
+type StatusError struct {
+	Code   int
+	Status string
+}
+
+func (e *StatusError) Error() string { return "auth service: " + e.Status }
+
 type AuthClient struct {
 	BaseURL      string
 	SessionToken string
@@ -54,7 +62,7 @@ func (c *AuthClient) postInto(ctx context.Context, path string, body, out any) e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("auth service: %s", resp.Status)
+		return &StatusError{Code: resp.StatusCode, Status: resp.Status}
 	}
 	if out == nil {
 		return nil
@@ -74,9 +82,20 @@ func (c *AuthClient) getInto(ctx context.Context, path string, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("auth service: %s", resp.Status)
+		return &StatusError{Code: resp.StatusCode, Status: resp.Status}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// Me 读取当前登录账号的用户名；同时用来判断会话是否还有效。
+func (c *AuthClient) Me(ctx context.Context) (string, error) {
+	var me struct {
+		Username string `json:"username"`
+	}
+	if err := c.getInto(ctx, "/v1/me", &me); err != nil {
+		return "", err
+	}
+	return me.Username, nil
 }
 
 func (c *AuthClient) AccountUsage(ctx context.Context) (string, int64, int64, int64, error) {

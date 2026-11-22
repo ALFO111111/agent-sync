@@ -118,7 +118,7 @@ The app checks GitHub for a new version when it opens (and once a day after that
 
 ### Remote control: hosted or self-hosted
 
-**Hosted (recommended)**: register at **https://agent-sync.yirenzaowusuo.cn/register**, then **sign in on the desktop**. The client does **not** offer registration; the sign-in form links to the website. Generate the QR code on the desktop and **scan it with the phone; the phone does not need to sign in**. Approve on the desktop and pairing completes. Free includes 1 computer + 1 phone and 1 GB/month; Pro is ¥19 per 30 days for 5 computers + 2 phones and 30 GB/month. Devices register automatically and can be renamed or revoked in the user center. MQTT credentials are per-device and rotated automatically by the client.
+**Hosted (recommended)**: register at **https://agent-sync.yirenzaowusuo.cn/register**, then **sign in on the desktop**. The client does **not** offer registration; the sign-in form links to the website. Generate the QR code on the desktop and **scan it with the phone; the phone does not need to sign in**. Approve on the desktop and pairing completes. Free includes 2 computers + 1 phone and 1 GB/month; Pro is ¥19 per 30 days for 5 computers + 2 phones and 30 GB/month. Devices register automatically and can be renamed or revoked in the user center. MQTT credentials are per-device and rotated automatically by the client.
 
 **Self-hosted broker**: deploy only **Mosquitto**, create a username/password with its built-in `password_file`, and enter the broker URL, username, and password once on the desktop. The QR code / invitation carries them, so **the phone can scan or paste it and connect without entering broker details**.
 

@@ -26,6 +26,20 @@ CLAUDE.local.md
 .claude/settings.local.json
 # 开发过程中的设计笔记（AI 工作记录），只留在本地
 docs/superpowers/
+.superpowers/
+
+# 常见凭证/密钥/数据库，防止手滑提交
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.db
+*.db-wal
+*.db-shm
 
 # 发布产物（本地打包用，不进仓库）
 /dist/

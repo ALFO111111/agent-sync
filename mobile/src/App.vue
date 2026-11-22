@@ -17,6 +17,7 @@ import {
   newDevice,
   pair,
   parseDeepLink,
+  parseInvitation,
   reconnect,
 } from './lib/protocol.js'
 import { createSeqGate } from './lib/seq.js'
@@ -363,7 +364,7 @@ async function credentialsFor(hostId, did, scope, opts = {}) {
   if (scope === 'pair' && opts.invitation?.mqttUser && opts.invitation?.mqttPassword) {
     return { url: opts.invitation.url || conn.value.url || 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: opts.invitation.mqttUser, password: opts.invitation.mqttPassword }
   }
-  if (!auth.value.sessionToken) throw new Error('请先登录官方账号')
+  if (!auth.value.sessionToken) throw new Error('配对二维码缺少凭据，请在电脑上重新登录官方账号后重新生成二维码')
   const t = await mqttToken(auth.value.sessionToken, did, hostId, 'phone', scope)
   return { url: conn.value.url || 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: t.username, password: t.password }
 }
@@ -372,9 +373,12 @@ async function doPair(invitation) {
   if (!invitation?.hostId || !invitation?.contentKey) throw new Error('邀请格式不对')
   manualClose = false
   reconnectEpoch++
+  // 模式要跟着这次邀请走；否则上次自建测试留下的 selfhost 会让官方配对
+  // 跳过“pair 令牌换正式令牌”的步骤。
+  conn.value.mode = invitation.mode === 'selfhost' ? 'selfhost' : 'official'
+  // 邀请里的 Broker 就是这次要用的地址；官方模式也要覆盖掉上次自建留下的 ws://。
+  if (invitation.url) conn.value.url = invitation.url
   if (invitation.mode === 'selfhost') {
-    conn.value.mode = 'selfhost'
-    if (invitation.url) conn.value.url = invitation.url
     if (invitation.mqttUser) {
       conn.value.username = invitation.mqttUser
       conn.value.password = invitation.mqttPassword || ''
@@ -435,6 +439,10 @@ async function doReconnect() {
   pairing.value.deviceKey = session.deviceKey || ''
   pairing.value.e2eeKey = session.deviceKey || session.pairKey
   pairing.value.seq = session.link.seq
+  // 电脑每次连接都会下发新的设备 JWT；不回写的话，旧 token 过期/被轮换后
+  // 手机就会一直“连上又失败”，只能重新扫码。
+  if (session.ready.mqttUser) pairing.value.mqttUser = session.ready.mqttUser
+  if (session.ready.mqttPassword) pairing.value.mqttPassword = session.ready.mqttPassword
   await savePairingsStore(pairings.value, pairing.value)
   state.value = 'connected'
   message.value = `已连接到 ${pairing.value.name}`
@@ -512,6 +520,8 @@ async function autoReconnect() {
         pairing.value.deviceKey = session.deviceKey || ''
         pairing.value.e2eeKey = session.deviceKey || session.pairKey
         pairing.value.seq = session.link.seq
+        if (session.ready.mqttUser) pairing.value.mqttUser = session.ready.mqttUser
+        if (session.ready.mqttPassword) pairing.value.mqttPassword = session.ready.mqttPassword
         await savePairingsStore(pairings.value, pairing.value)
         hostOnline.value = true
         state.value = 'connected'
@@ -592,12 +602,8 @@ function submitInvitationText(text) {
 
 function submitInvitation() {
   run(async () => {
-    let invitation
-    try {
-      invitation = JSON.parse(invitationText.value.trim())
-    } catch {
-      throw new Error('邀请内容不是合法 JSON')
-    }
+    const invitation = parseInvitation(invitationText.value.trim())
+    if (!invitation) throw new Error('邀请内容不是合法的配对邀请')
     await doPair(invitation)
     invitationText.value = ''
   })
@@ -659,6 +665,11 @@ function removeComputer(p) {
     if (active) {
       pairing.value = pairings.value[0] || null
       message.value = pairing.value ? `已删除，当前选择 ${pairing.value.name}，点“连接”` : '已删除全部配对'
+    }
+    if (!pairings.value.length) {
+      // 最后一台电脑也删掉时，把自建 Broker 的用户名/密码一并清掉，避免残留。
+      await secureRemove('mqttConn')
+      conn.value = { mode: 'official', url: 'wss://agent-sync.yirenzaowusuo.cn/mqtt', username: '', password: '' }
     }
     await savePairingsStore(pairings.value, pairing.value)
     log(`已删除电脑 ${p.name}`)
@@ -1115,11 +1126,22 @@ onMounted(async () => {
     log(`设备指纹 ${fingerprint(device.value.publicKey).slice(0, 12)}`)
     if (!secure.value) log('网页调试模式：密钥仅存于浏览器，非正式安全存储')
     if (Capacitor.isNativePlatform()) {
+      // 冷启动时 appUrlOpen 和 getLaunchUrl 可能拿到同一个链接，必须去重，
+      // 否则会弹两次确认框、并发起两次连接，后一次会把前一次顶掉。
+      let lastLink = ''
+      let lastLinkAt = 0
       const handleLink = url => {
+        const now = Date.now()
+        if (url && url === lastLink && now - lastLinkAt < 5000) return
         const inv = parseDeepLink(url)
         if (inv) {
+          lastLink = url
+          lastLinkAt = now
           log('收到扫码邀请')
-          const who = inv.name || inv.hostId || '未命名电脑'
+          // 优先显示账号用户名（官方模式），其次电脑名；不要在界面上暴露 32 位 ID。
+          const who = inv.username
+            ? `${inv.username}${inv.hostName ? `（${inv.hostName}）` : ''}`
+            : (inv.hostName || inv.name || '未命名电脑')
           if (!window.confirm(`收到「${who}」的配对邀请，确认连接这台电脑？`)) return
           run(() => doPair(inv))
         }
@@ -1472,8 +1494,8 @@ async function scanQR() {
       if (!raw) return
       await stopScanQR()
       try {
-        const inv = parseDeepLink(raw) || JSON.parse(raw)
-        if (!inv?.url) throw new Error('二维码不是配对邀请')
+        const inv = parseInvitation(raw)
+        if (!inv) throw new Error('二维码不是合法的配对邀请')
         await doPair(inv)
       } catch (err) {
         notify('扫码失败：' + (err.message || err))

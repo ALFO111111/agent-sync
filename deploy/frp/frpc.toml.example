@@ -1,4 +1,4 @@
-serverAddr = "47.80.63.39"
+serverAddr = "<ECS_PUBLIC_IP>"
 serverPort = 7000
 auth.method = "token"
 auth.token = "<与 frps 相同>"

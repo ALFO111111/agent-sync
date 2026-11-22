@@ -44,6 +44,7 @@ type RemoteStatus struct {
 	Broker         string          `json:"broker,omitempty"`
 	Mode           string          `json:"mode,omitempty"`
 	AccountID      string          `json:"accountId,omitempty"`
+	Username       string          `json:"username,omitempty"`
 	LoggedIn       bool            `json:"loggedIn,omitempty"`
 	Plan           string          `json:"plan,omitempty"`
 	PlanExpiresAt  int64           `json:"planExpiresAt,omitempty"`
@@ -142,6 +143,7 @@ type remoteRequest struct {
 	Ref          string `json:"ref,omitempty"`
 	Name         string `json:"name,omitempty"`
 	AccountID    string `json:"accountId,omitempty"`
+	Username     string `json:"username,omitempty"`
 	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
@@ -157,6 +159,7 @@ type remoteResponse struct {
 	Broker        string          `json:"broker,omitempty"`
 	Mode          string          `json:"mode,omitempty"`
 	AccountID     string          `json:"accountId,omitempty"`
+	Username      string          `json:"username,omitempty"`
 	LoggedIn      bool            `json:"loggedIn,omitempty"`
 	Plan          string          `json:"plan,omitempty"`
 	PlanExpiresAt int64           `json:"planExpiresAt,omitempty"`
@@ -278,6 +281,7 @@ func GetRemoteStatus(cfg *config.Config) RemoteStatus {
 	st.Broker = resp.Broker
 	st.Mode = resp.Mode
 	st.AccountID = resp.AccountID
+	st.Username = resp.Username
 	st.LoggedIn = resp.LoggedIn
 	st.Plan, st.PlanExpiresAt, st.UsedBytes, st.QuotaBytes = resp.Plan, resp.PlanExpiresAt, resp.UsedBytes, resp.QuotaBytes
 	st.BrokerState, st.LastError = resp.BrokerState, resp.LastError
@@ -310,6 +314,10 @@ func GetRemoteConfig() (*RemoteConfig, error) {
 		mode = "official"
 	}
 	broker := DisplayBrokerURL(cfg.RemoteBroker)
+	if mode == "official" {
+		// 官方模式固定走官方 wss 中转，避免沿用上一次自建留下的 ws:// 明文地址。
+		broker = defaultOfficialBroker
+	}
 	return &RemoteConfig{
 		Mode:      mode,
 		Broker:    broker,
@@ -331,9 +339,12 @@ func SaveRemoteConfig(rc RemoteConfig) error {
 	if mode != "official" && mode != "selfhost" {
 		mode = "official"
 	}
-	broker, err := NormalizeBrokerURL(rc.Broker)
-	if err != nil {
-		return err
+	broker := defaultOfficialBroker
+	if mode == "selfhost" {
+		broker, err = NormalizeBrokerURL(rc.Broker)
+		if err != nil {
+			return err
+		}
 	}
 	setRemotePassword(rc.Password)
 	cfg.RemoteMode = mode
@@ -353,24 +364,51 @@ const defaultOfficialBroker = "wss://agent-sync.yirenzaowusuo.cn/mqtt"
 
 // LoginRemote 登录官方账号。如果本机 host 还没启动，会先用官方默认配置启动它，
 // 否则首次登录会卡在“remote host is not running”。
+//
+// 已经运行中的 host 必须在账号写入后重启：它的 uid / AuthClient 是在启动时根据
+// 旧账号创建的，不重启就会出现“桌面显示已登录、二维码却属于旧账号且没有配对凭据”。
 func LoginRemote(username, password, broker string) error {
+	remoteLifecycle.Lock()
+	defer remoteLifecycle.Unlock()
+
 	dir := RemoteDir()
-	if st, err := remoteCall(dir, "status", 5*time.Second); err == nil && st.Mode == "selfhost" {
+	st, statusErr := remoteCall(dir, "status", 5*time.Second)
+	wasRunning := statusErr == nil
+	if wasRunning && st.Mode == "selfhost" {
 		return i18n.Err("自建模式正在运行，请先停止再登录官方账号")
 	}
-	accountID, token, err := loginAccount(username, password)
+	accountID, name, token, err := loginAccount(username, password)
 	if err != nil {
 		return err
 	}
-	if err := ensureOfficialRemote(broker); err != nil {
-		return err
-	}
-	st, err := remoteDial(dir, remoteRequest{Cmd: "account", AccountID: accountID, RefreshToken: token}, 5*time.Second)
+	broker, err = ensureOfficialRemote(broker, wasRunning)
 	if err != nil {
 		return err
 	}
-	if !st.OK {
-		return errors.New(st.Error)
+	resp, err := remoteDial(dir, remoteRequest{Cmd: "account", AccountID: accountID, Username: name, RefreshToken: token}, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.New(resp.Error)
+	}
+	if wasRunning {
+		if err := remoteStopFn(); err != nil {
+			return err
+		}
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		cfg.RemoteMode = "official"
+		cfg.RemoteBroker = broker
+		// 必须落盘：remoteEnsureAt 只读内存配置，不保存。
+		if err := config.Save(cfg); err != nil {
+			return err
+		}
+		if err := remoteEnsureAt(cfg, dir); err != nil {
+			return err
+		}
 	}
 	if cfg, err := config.Load(); err == nil {
 		_ = setRemoteEnabled(cfg, true)
@@ -379,31 +417,24 @@ func LoginRemote(username, password, broker string) error {
 }
 
 // ensureOfficialRemote 保证本机 host 以官方模式运行；首次登录时自动启动。
-func ensureOfficialRemote(broker string) error {
+// 返回规范化后的 Broker 地址。调用方需持有 remoteLifecycle（内部直接调 remoteEnsureAt）。
+func ensureOfficialRemote(broker string, wasRunning bool) (string, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return err
+		return "", err
 	}
-	broker = strings.TrimSpace(broker)
-	if broker == "" {
-		broker = cfg.RemoteBroker
-	}
-	if broker == "" {
-		broker = defaultOfficialBroker
-	}
-	broker, err = NormalizeBrokerURL(broker)
-	if err != nil {
-		return err
-	}
-	if _, err := remoteCall(RemoteDir(), "status", 5*time.Second); err == nil {
-		return nil // 已在运行；模式由调用方事先检查过
+	// 官方模式固定使用官方 wss，不接受页面/旧配置里残留的 ws:// 自建地址，
+	// 否则设备 JWT 会被明文发送到错误的 Broker。
+	broker = defaultOfficialBroker
+	if wasRunning {
+		return broker, nil // 已在运行；登录流程后面会重启它
 	}
 	cfg.RemoteMode = "official"
 	cfg.RemoteBroker = broker
 	if err := config.Save(cfg); err != nil {
-		return err
+		return "", err
 	}
-	return RemoteEnsure(cfg)
+	return broker, remoteEnsureAt(cfg, RemoteDir())
 }
 
 // TestRemoteBroker 用当前填写的地址和用户名密码连接一次 Broker，用于自建模式的“测试连接”。
@@ -428,17 +459,17 @@ func TestRemoteBroker(rc RemoteConfig) error {
 	return nil
 }
 
-func loginAccount(username, password string) (accountID, token string, err error) {
+func loginAccount(username, password string) (accountID, displayName, token string, err error) {
 	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
 	req, err := http.NewRequest(http.MethodPost, remoteAuthBase+"/v1/auth/login", bytes.NewReader(body))
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", i18n.Err("无法连接账号服务，请检查网络")
+		return "", "", "", i18n.Err("无法连接账号服务，请检查网络")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
@@ -450,40 +481,45 @@ func loginAccount(username, password string) (accountID, token string, err error
 		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
 		switch apiErr.Error {
 		case "invalid_credentials":
-			return "", "", i18n.Err("用户名或密码错误")
+			return "", "", "", i18n.Err("用户名或密码错误")
 		case "account_locked":
 			if apiErr.RetryAfter > 0 {
-				return "", "", i18n.Err("连续失败过多，已锁定 %d 分钟", (apiErr.RetryAfter+59)/60)
+				return "", "", "", i18n.Err("连续失败过多，已锁定 %d 分钟", (apiErr.RetryAfter+59)/60)
 			}
-			return "", "", i18n.Err("账号已锁定，请稍后再试")
+			return "", "", "", i18n.Err("账号已锁定，请稍后再试")
 		case "account_disabled":
-			return "", "", i18n.Err("账号已停用")
+			return "", "", "", i18n.Err("账号已停用")
 		case "rate_limited":
-			return "", "", i18n.Err("操作太频繁，请稍后再试")
+			return "", "", "", i18n.Err("操作太频繁，请稍后再试")
 		case "mqtt_password_used":
-			return "", "", i18n.Err("这是 MQTT 密码，不是账号密码；请用注册时的密码登录")
+			return "", "", "", i18n.Err("这是 MQTT 密码，不是账号密码；请用注册时的密码登录")
 		}
 		if apiErr.Message != "" {
-			return "", "", errors.New(apiErr.Message)
+			return "", "", "", errors.New(apiErr.Message)
 		}
-		return "", "", i18n.Err("账号请求失败：%s", resp.Status)
+		return "", "", "", i18n.Err("账号请求失败：%s", resp.Status)
 	}
 	var out struct {
 		AccountID    string `json:"accountId"`
+		Username     string `json:"username"`
 		SessionToken string `json:"sessionToken"`
 		RefreshToken string `json:"refreshToken"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	token = out.SessionToken
 	if token == "" {
 		token = out.RefreshToken
 	}
 	if out.AccountID == "" || token == "" {
-		return "", "", i18n.Err("登录响应缺少账号信息")
+		return "", "", "", i18n.Err("登录响应缺少账号信息")
 	}
-	return out.AccountID, token, nil
+	displayName = strings.TrimSpace(out.Username)
+	if displayName == "" {
+		displayName = strings.TrimSpace(username)
+	}
+	return out.AccountID, displayName, token, nil
 }
 
 // LogoutRemote 清除本机 host 保存的账号信息。
@@ -495,6 +531,7 @@ func LogoutRemote() error {
 // RemoteAuth 是官方账号的登录状态。
 type RemoteAuth struct {
 	AccountID string `json:"accountId"`
+	Username  string `json:"username"`
 	LoggedIn  bool   `json:"loggedIn"`
 }
 
@@ -504,7 +541,7 @@ func RemoteAuthStatus() (RemoteAuth, error) {
 	if err != nil {
 		return RemoteAuth{}, err
 	}
-	return RemoteAuth{AccountID: st.AccountID, LoggedIn: st.LoggedIn}, nil
+	return RemoteAuth{AccountID: st.AccountID, Username: st.Username, LoggedIn: st.LoggedIn}, nil
 }
 
 // RemoteEnsure 在未运行且已配置中转地址时启动主机组件。
@@ -572,12 +609,19 @@ func remoteEnsureAt(cfg *config.Config, dir string) error {
 		return err
 	}
 	args := []string{"run", "-broker", broker, "-mode", mode, "-state", dir, "-lang", i18n.Lang()}
+	passFile := ""
 	if mode == "selfhost" {
 		if cfg.RemoteUsername != "" {
 			args = append(args, "-user", cfg.RemoteUsername)
 		}
 		if p := getRemotePassword(); p != "" {
-			args = append(args, "-pass", p)
+			// 不把密码放进命令行：同机同用户的 ps/任务管理器能看到参数。
+			passFile = filepath.Join(dir, ".remote-pass")
+			if err := os.WriteFile(passFile, []byte(p+"\n"), 0o600); err != nil {
+				logf.Close()
+				return err
+			}
+			args = append(args, "-pass-file", passFile)
 		}
 	}
 	if cfg.RemoteName != "" {
@@ -607,7 +651,11 @@ func remoteEnsureAt(cfg *config.Config, dir string) error {
 	_ = logf.Close()
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
-	return waitRemoteReady(dir, exited, 10*time.Second, cfg.RemoteBin == "" && hostbundle.Available())
+	err = waitRemoteReady(dir, exited, 10*time.Second, cfg.RemoteBin == "" && hostbundle.Available())
+	if err == nil && passFile != "" {
+		_ = os.Remove(passFile) // host 启动时已经读完，不再保留明文密码文件
+	}
+	return err
 }
 
 func waitRemoteReady(dir string, exited <-chan error, timeout time.Duration, bundled bool) error {

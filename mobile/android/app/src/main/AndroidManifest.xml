@@ -5,12 +5,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- allowMixedContent + usesCleartextTraffic：自建 Broker 常用局域网 ws://，
+         Android 9+ 默认会以 ERR_CLEARTEXT_NOT_PERMITTED 拦截。官方中转仍走 wss://。 -->
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/AppTheme">
 
         <activity

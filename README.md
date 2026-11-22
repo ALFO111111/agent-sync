@@ -105,7 +105,7 @@ Claude Code 和 Codex 在两个系统上都支持，Windows 和 Mac 之间可以
 
 ### 手机遥控：官方托管 / 自建
 
-**官方托管（推荐）**：先到 **[官网注册](https://agent-sync.yirenzaowusuo.cn/register)**，然后**电脑登录账号**。客户端**不提供注册**，只负责登录；没有账号时登录页会给出官网链接。电脑登录后生成二维码，**手机直接扫码，不需要登录**；在电脑上批准后自动绑定。免费档 1 台电脑 + 1 台手机，Pro 档 5 台电脑 + 2 台手机，设备自动登记，可以在[用户中心](https://agent-sync.yirenzaowusuo.cn/app/overview)改名、撤销。MQTT 凭据由客户端按设备自动申请和轮换。
+**官方托管（推荐）**：先到 **[官网注册](https://agent-sync.yirenzaowusuo.cn/register)**，然后**电脑登录账号**。客户端**不提供注册**，只负责登录；没有账号时登录页会给出官网链接。电脑登录后生成二维码，**手机直接扫码，不需要登录**；在电脑上批准后自动绑定。免费档 2 台电脑 + 1 台手机，Pro 档 5 台电脑 + 2 台手机，设备自动登记，可以在[用户中心](https://agent-sync.yirenzaowusuo.cn/app/overview)改名、撤销。MQTT 凭据由客户端按设备自动申请和轮换。
 
 **自建 Broker**：只需要部署一个 **Mosquitto**，用自带的 `password_file` 建用户名密码，不需要账号后台，也不需要 `agent-sync-auth`。电脑端填一次 Broker 信息，生成二维码后**手机扫码或粘贴邀请即可连接，手机上不需要再填**。
 

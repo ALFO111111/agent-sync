@@ -5,9 +5,9 @@
 ## 环境
 
 - 桌面：Windows 11，构建 `build\bin\agent-sync.exe`（Wails dev build）
-- 手机：Huawei ALN-AL00，`adb -s FMR0224A11040643`，包名 `com.alfo.agentsync`
-- 服务端：`agent-sync.yirenzaowusuo.cn`（ECS `47.80.63.39`）
-- 账号：`lvfuyang`（官方模式）
+- 手机：Huawei ALN-AL00，`adb -s <device-serial>`，包名 `com.alfo.agentsync`
+- 服务端：`agent-sync.yirenzaowusuo.cn`（ECS `<ECS_PUBLIC_IP>`）
+- 账号：`<test-account>`（官方模式）
 
 ## 一、服务端
 
@@ -20,7 +20,7 @@
 ## 二、桌面端
 
 1. 启动 `build\bin\agent-sync.exe`，确认版本和“手机遥控”页状态。
-2. 官方模式已登录（账号 `lvfuyang`）；点“启动主机”，状态变为“中转已连接”。
+2. 官方模式已登录（账号 `<test-account>`）；点“启动主机”，状态变为“中转已连接”。
 3. 点“邀请”，出现二维码；记下 hostId 和邀请有效期。
 4. 关闭桌面窗口（Windows 最小化到托盘），确认 host 仍在运行。
 

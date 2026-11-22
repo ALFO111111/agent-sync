@@ -414,6 +414,7 @@ export default {
     noAccount: 'No account? Register on the website',
     accountForm: 'Account',
     loginCredentialHint: 'Use your website account password here, not the MQTT username/password from Connections.',
+    loginInMain: 'Not signed in yet. Close editing and use the sign-in box above.',
     logout: 'Sign out',
     account: 'Signed in as',
     loggedIn: 'Signed in',

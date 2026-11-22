@@ -11,7 +11,7 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write # 创建 Release、上传文件
+  contents: read # 默认只读；只有真正写 Release 的任务单独提权
 
 jobs:
   preflight:
@@ -48,6 +48,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v7
         with:
@@ -95,6 +97,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -145,8 +149,12 @@ jobs:
   manifest:
     needs: [build, release]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 上传签名清单到 Release
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@v8
         with:
@@ -182,8 +190,12 @@ jobs:
   release:
     needs: [build, android]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 创建/发布 Release
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@v8
         with:

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ALFO111111/agent-sync/internal/i18n"
 	"github.com/ALFO111111/agent-sync/internal/remotev1"
 )
 
@@ -25,6 +26,7 @@ type ctlRequest struct {
 	Ref          string `json:"ref,omitempty"`
 	Name         string `json:"name,omitempty"`
 	AccountID    string `json:"accountId,omitempty"`
+	Username     string `json:"username,omitempty"`
 	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
@@ -48,6 +50,7 @@ type ctlResponse struct {
 	Broker        string                `json:"broker,omitempty"`
 	Mode          string                `json:"mode,omitempty"`
 	AccountID     string                `json:"accountId,omitempty"`
+	Username      string                `json:"username,omitempty"`
 	LoggedIn      bool                  `json:"loggedIn,omitempty"`
 	Plan          string                `json:"plan,omitempty"`
 	PlanExpiresAt int64                 `json:"planExpiresAt,omitempty"`
@@ -134,13 +137,21 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 			// 自建没有 auth 服务，二维码里直接带 Mosquitto 的用户名密码，
 			// 手机扫码/粘贴后即可连接。二维码只在电脑屏幕上短时间展示。
 			inv.MQTTUser, inv.MQTTPassword = d.mqttUser, d.mqttPass
-		} else if d.host.Auth != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			user, pass, err := d.host.Auth.PairToken(ctx, inv.HostID)
-			cancel()
-			if err == nil {
-				inv.MQTTUser, inv.MQTTPassword = user, pass
+		} else {
+			// 官方模式的二维码必须带短期配对凭据，否则手机扫码后会误报“请先登录”。
+			st := d.auth.State()
+			ac := d.getAuth()
+			if ac == nil || st.AccountID == "" || st.RefreshToken == "" {
+				return ctlResponse{Error: i18n.T("官方账号未登录，请先在电脑上登录后再生成二维码")}
 			}
+			inv.Username = st.Username
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			user, pass, err := ac.PairToken(ctx, inv.HostID)
+			cancel()
+			if err != nil {
+				return ctlResponse{Error: i18n.T("账号登录已失效，请重新登录官方账号后再生成二维码")}
+			}
+			inv.MQTTUser, inv.MQTTPassword = user, pass
 		}
 		return ctlResponse{OK: true, Invitation: remotev1.EncodeInvitation(inv), HostName: d.hostName}
 	case "pending":
@@ -208,27 +219,27 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 		if req.AccountID == "" || req.RefreshToken == "" {
 			return ctlResponse{Error: "missing account"}
 		}
-		if err := d.auth.SetAccount(req.AccountID, req.RefreshToken); err != nil {
+		if err := d.auth.SetAccount(req.AccountID, req.Username, req.RefreshToken); err != nil {
 			return ctlResponse{Error: err.Error()}
 		}
+		d.reconnect() // 立刻用新账号重建 MQTT 链路
 		return ctlResponse{OK: true}
 	case "logout":
 		if err := d.auth.Logout(); err != nil {
 			return ctlResponse{Error: err.Error()}
 		}
+		d.reconnect() // 断开旧链路；主循环会清空 Auth 并等待重新登录
 		return ctlResponse{OK: true}
 	case "authstatus":
 		st := d.auth.State()
-		return ctlResponse{OK: true, AccountID: st.AccountID, LoggedIn: st.AccountID != "" && st.RefreshToken != ""}
+		return ctlResponse{OK: true, AccountID: st.AccountID, Username: st.Username, LoggedIn: st.AccountID != "" && st.RefreshToken != ""}
 	case "status":
 		st := d.auth.State()
-		resp := ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Broker: d.broker, Mode: d.mode, AccountID: st.AccountID, LoggedIn: st.AccountID != "" && st.RefreshToken != "", Version: version, BuildID: buildID, PID: os.Getpid()}
+		resp := ctlResponse{OK: true, HostID: st.HostID, HostName: d.hostName, Broker: d.broker, Mode: d.mode, AccountID: st.AccountID, Username: st.Username, LoggedIn: st.AccountID != "" && st.RefreshToken != "", Version: version, BuildID: buildID, PID: os.Getpid()}
 		resp.BrokerState, resp.LastError = d.brokerInfo()
-		if d.host != nil && d.host.Auth != nil && resp.LoggedIn {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			plan, exp, used, quota, err := d.host.Auth.AccountUsage(ctx)
-			cancel()
-			if err == nil {
+		if ac := d.getAuth(); ac != nil && resp.LoggedIn && st.AccountID != "" {
+			plan, exp, used, quota, ok := d.cachedUsage(ac)
+			if ok {
 				resp.Plan, resp.PlanExpiresAt, resp.UsedBytes, resp.QuotaBytes = plan, exp, used, quota
 			}
 		}
@@ -244,6 +255,38 @@ func (d *daemon) handle(req ctlRequest) ctlResponse {
 	default:
 		return ctlResponse{Error: "unknown command"}
 	}
+}
+
+// cachedUsage 缓存套餐/流量 60 秒：桌面端每 3 秒拉一次状态，
+// 每次都打公网会把 auth 的 /v1/me 和 /v1/usage 打爆。
+func (d *daemon) cachedUsage(ac remotev1.DeviceRegistrar) (plan string, exp, used, quota int64, ok bool) {
+	read := func() (string, int64, int64, int64, bool) {
+		d.usageMu.Lock()
+		defer d.usageMu.Unlock()
+		if time.Since(d.usageAt) < time.Minute {
+			return d.usagePlan, d.usageExp, d.usageUsed, d.usageQuota, true
+		}
+		return "", 0, 0, 0, false
+	}
+	if plan, exp, used, quota, ok = read(); ok {
+		return
+	}
+	d.usageFetchMu.Lock()
+	defer d.usageFetchMu.Unlock()
+	if plan, exp, used, quota, ok = read(); ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	plan, exp, used, quota, err := ac.AccountUsage(ctx)
+	cancel()
+	if err != nil {
+		return "", 0, 0, 0, false
+	}
+	d.usageMu.Lock()
+	d.usageAt = time.Now()
+	d.usagePlan, d.usageExp, d.usageUsed, d.usageQuota = plan, exp, used, quota
+	d.usageMu.Unlock()
+	return plan, exp, used, quota, true
 }
 
 // sendControl 是 CLI 侧的一次请求。

@@ -18,8 +18,9 @@ import (
 	"github.com/ALFO111111/agent-sync/internal/i18n"
 )
 
-// 官方更新清单地址。签名私钥离线保存，客户端只内置公钥。
-var manifestBase = "https://agent-sync.yirenzaowusuo.cn/api/update/latest"
+// 官方更新清单地址：随 Release 一起发布的签名 JSON（GitHub 只负责托管，签名保证完整性）。
+// 之前指向官网 /api/update/latest，但该路由并不存在，实际一直回退到 GitHub API。
+var manifestBase = "https://github.com/ALFO111111/agent-sync/releases/latest/download/"
 
 // manifestPubKey 是更新清单的 Ed25519 公钥（base64）。
 // 轮换公钥必须随客户端发版，旧客户端不能验新清单。
@@ -74,7 +75,7 @@ func checkManifest(ctx context.Context, current string) (*Info, error) {
 		return nil, errors.New("update: manifest public key not configured")
 	}
 	assetPlatform := runtime.GOOS + "/" + runtime.GOARCH
-	u := manifestBase + "?platform=" + url.QueryEscape(assetPlatform)
+	u := strings.TrimRight(manifestBase, "/") + "/latest-" + runtime.GOOS + "-" + runtime.GOARCH + ".json"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
