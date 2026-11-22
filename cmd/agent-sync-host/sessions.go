@@ -116,16 +116,30 @@ func (s *sessionService) deniedPath(target string) bool {
 	if target == "" {
 		return false
 	}
-	dirs := []string{config.Dir()}
+	target = canonicalPath(target)
+	dirs := []string{canonicalPath(config.Dir())}
 	if s.stateDir != "" {
-		dirs = append(dirs, s.stateDir)
+		dirs = append(dirs, canonicalPath(s.stateDir))
 	}
 	for _, d := range dirs {
-		if d != "" && pathWithin(filepath.Clean(target), filepath.Clean(d)) {
+		if d != "" && pathWithin(target, d) {
 			return true
 		}
 	}
 	return false
+}
+
+// canonicalPath 尽量解析符号链接；文件不存在时解析父目录，
+// 避免 Windows 临时目录的短路径/符号链接导致状态目录比较失败。
+func canonicalPath(p string) string {
+	p = filepath.Clean(p)
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	if r, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+		return filepath.Join(r, filepath.Base(p))
+	}
+	return p
 }
 
 // pathWithin 判断 p 是否等于 root 或在 root 下面。
